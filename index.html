@@ -341,23 +341,10 @@
 <div id="toast" class="toast hidden"></div>
 
 <script type="module">
-// Trystero (MQTT strategy) bundled locally: jsDelivr and Nostr relays are unreliable from mainland China.
-import { joinRoom, selfId, getRelaySockets } from './trystero-mqtt.js';
+// All traffic is relayed through public MQTT brokers (see net.js): no WebRTC, so no NAT/firewall issues.
+import { joinRoom, selfId, connectedCount, BROKERS } from './net.js';
 import { Game, KOMI } from './go.js';
 
-const APP_ID = 'alphanothing-v1-p7k2m9';
-const RELAYS = [
-  'wss://broker.emqx.io:8084/mqtt',
-  'wss://broker.hivemq.com:8884/mqtt',
-  'wss://test.mosquitto.org:8081/mqtt',
-  'wss://public:public@public.cloud.shiftr.io',
-];
-// STUN servers reachable from mainland China first; Google's are blocked there.
-const ICE = [
-  'stun:stun.chat.bilibili.com:3478', 'stun:stun.miwifi.com:3478', 'stun:stun.hitv.com:3478',
-  'stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302',
-].map(urls => ({ urls }));
-const P2P = { appId: APP_ID, relayConfig: { urls: RELAYS }, rtcConfig: { iceServers: ICE } };
 const $ = id => document.getElementById(id);
 const LETTERS = 'ABCDEFGHJKLMNOPQRST';
 const THOUGHTS = [
@@ -373,6 +360,7 @@ let game = null;          // authoritative Game, host only
 let myColor = 0, st = null, over = false, playing = false;
 let rounds = 0, myWins = 0, mateWins = 0;
 let hover = null, thinkTimer = null, lastEnd = null;
+let roundId = null, stateSeq = 0;
 let lobby = null, matchTimer = null, pending = null; // random-match lobby
 let randomMode = false, connectTimer = null;        // team formed via random match
 
@@ -430,7 +418,7 @@ function startMatch(size) {
   leaveTeam(); stopMatch();
   history.replaceState(null, '', location.pathname);
   N = size;
-  const l = lobby = joinRoom(P2P, `lobby-${size}`);
+  const l = lobby = joinRoom(`lobby-${size}`);
   const propose = l.makeAction('propose'), answer = l.makeAction('answer');
   l.onPeerJoin = l.onPeerLeave = renderMatch;
 
@@ -479,11 +467,8 @@ function matched(c) {
 }
 
 // Matchmaking server status, shown while matching / waiting in a team.
-function relayCount() {
-  return Object.values(getRelaySockets()).filter(ws => ws && ws.readyState === 1).length;
-}
 setInterval(() => {
-  const n = relayCount(), t = n ? `匹配服务器已连接 ${n}/${RELAYS.length}` : '正在连接匹配服务器…';
+  const n = connectedCount(), t = n ? `匹配服务器已连接 ${n}/${BROKERS.length}` : '正在连接匹配服务器…';
   for (const el of document.querySelectorAll('.net')) el.textContent = t;
 }, 1000);
 
@@ -509,10 +494,8 @@ function enterTeam(rawCode, opts = {}) {
       startMatch(N);
     }, 15000);
   }
-  room = joinRoom(P2P, 'team-' + code, {
-    onJoinError: () => toast('与队友直连失败：你们的网络可能不支持 P2P，换个网络（如手机热点）再试'),
-  });
-  A = Object.fromEntries(['hello', 'full', 'ready', 'start', 'act', 'state', 'end', 'err'].map(n => [n, room.makeAction(n)]));
+  room = joinRoom('team-' + code);
+  A = Object.fromEntries(['hello', 'full', 'ready', 'start', 'act', 'state', 'end', 'err', 'sync'].map(n => [n, room.makeAction(n)]));
 
   room.onPeerJoin = id => A.hello.send({ partner }, { target: id });
   room.onPeerLeave = id => { if (id === partner) partnerLeft(); };
@@ -531,9 +514,25 @@ function enterTeam(rawCode, opts = {}) {
   A.ready.onMessage = (d, { peerId }) => { if (peerId !== partner) return; mateReady = !!d; renderTeam(); maybeStart(); };
 
   // Host -> guest
-  A.start.onMessage = (d, { peerId }) => { if (peerId === partner) beginRound(d.color, d.size); };
-  A.state.onMessage = (d, { peerId }) => { if (peerId === partner) { st = d; render(); } };
-  A.end.onMessage = (d, { peerId }) => { if (peerId === partner) onEnd(d); };
+  A.start.onMessage = (d, { peerId }) => {
+    if (peerId !== partner) return;
+    if (d.round !== roundId) beginRound(d.color, d.size, d.round);
+    applyState(d.state);
+  };
+  A.state.onMessage = (d, { peerId }) => { if (peerId === partner) applyState(d); };
+  A.end.onMessage = (d, { peerId }) => { if (peerId === partner && d.round === roundId) onEnd(d); };
+  // Messages sent while a phone was backgrounded/offline are lost; resync after reconnecting.
+  A.sync.onMessage = (d, { peerId }) => {
+    if (peerId !== partner || !isHost()) return;
+    if (game) A.start.send(startMsg(), { target: partner });
+    else if (lastEnd && lastEnd.round === d.round) A.end.send(lastEnd, { target: partner });
+  };
+  room.onReconnect = () => {
+    if (!partner) return;
+    if (isHost()) { if (game) A.start.send(startMsg(), { target: partner }); }
+    else if (playing) A.sync.send({ round: roundId }, { target: partner });
+    else if (meReady) A.ready.send(true, { target: partner });
+  };
   A.err.onMessage = (d, { peerId }) => { if (peerId === partner) toast(d); };
   // Guest -> host
   A.act.onMessage = (d, { peerId }) => {
@@ -597,14 +596,24 @@ function renderTeam() {
 function maybeStart() {
   if (!isHost() || !meReady || !mateReady || playing) return;
   game = new Game(N);
-  const hostColor = Math.random() < 0.5 ? 1 : 2;
-  A.start.send({ color: 3 - hostColor, size: N }, { target: partner });
-  beginRound(hostColor, N);
-  pushState();
+  stateSeq = 0;
+  beginRound(Math.random() < 0.5 ? 1 : 2, N, Math.random().toString(36).slice(2, 10));
+  st = { ...game.snapshot(), seq: ++stateSeq };
+  A.start.send(startMsg(), { target: partner });
+  render();
 }
 
-function beginRound(color, size) {
-  myColor = color; N = size; over = false; playing = true; st = null; hover = null;
+const startMsg = () => ({ color: 3 - myColor, size: N, round: roundId, state: st });
+
+// Ignore states that arrive late or out of order (each message travels via several brokers).
+function applyState(d) {
+  if (!d || (st && d.seq <= st.seq)) return;
+  st = d;
+  render();
+}
+
+function beginRound(color, size, round) {
+  myColor = color; N = size; roundId = round; over = false; playing = true; st = null; hover = null;
   meReady = mateReady = false;
   $('overlay').classList.add('hidden');
   $('meDot').className = 'dot ' + (myColor === 1 ? 'b' : 'w');
@@ -614,7 +623,7 @@ function beginRound(color, size) {
 }
 
 function pushState() {
-  st = game.snapshot();
+  st = { ...game.snapshot(), seq: ++stateSeq };
   A.state.send(st, { target: partner });
   render();
 }
@@ -639,7 +648,7 @@ function hostApply(color, msg) {
 
 function finish(winner, reason, score) {
   game.over = true;
-  const d = { winner, reason, score, moves: game.moves };
+  const d = { winner, reason, score, moves: game.moves, round: roundId };
   A.end.send(d, { target: partner });
   onEnd(d);
 }
@@ -851,11 +860,8 @@ $('shareBtn').onclick = () => {
 };
 
 // ---------- boot ----------
-// Some in-app browsers (older WeChat / Xiaohongshu webviews) ship without WebRTC.
-if (!window.RTCPeerConnection) {
-  for (const id of ['matchBtn', 'createBtn', 'joinBtn']) $(id).disabled = true;
-  toast('当前浏览器不支持实时对弈，请点右上角“…”选择在浏览器中打开');
-}
+// Leave rooms on unload so the teammate / lobby sees us go immediately.
+window.addEventListener('pagehide', () => { if (room) room.leave(); if (lobby) lobby.leave(); });
 const fromUrl = parseCode(new URLSearchParams(location.search).get('team'));
 if (fromUrl) enterTeam(fromUrl.code);
 </script>
