@@ -247,6 +247,7 @@
       <div class="radar"><i></i><i></i><i></i><b></b></div>
       <h2>正在为你匹配网友队友</h2>
       <div class="stat" id="matchInfo"></div>
+      <div class="stat net" style="margin-top:4px"></div>
       <p class="muted" id="matchHint"></p>
       <div class="row">
         <button id="matchToTeamBtn">改为邀请朋友</button>
@@ -261,6 +262,7 @@
       <span class="label" style="margin-top:0">Team code</span>
       <div class="code" id="teamCode"></div>
       <div class="stat" id="teamBoard"></div>
+      <div class="stat net" style="margin-top:4px"></div>
 
       <span class="label">Challengers · <span id="teamCount">1</span> / 2</span>
       <div class="seats">
@@ -339,10 +341,23 @@
 <div id="toast" class="toast hidden"></div>
 
 <script type="module">
-import { joinRoom, selfId } from 'https://esm.run/trystero@0.26.0';
+// Trystero (MQTT strategy) bundled locally: jsDelivr and Nostr relays are unreliable from mainland China.
+import { joinRoom, selfId, getRelaySockets } from './trystero-mqtt.js';
 import { Game, KOMI } from './go.js';
 
 const APP_ID = 'alphanothing-v1-p7k2m9';
+const RELAYS = [
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
+  'wss://test.mosquitto.org:8081/mqtt',
+  'wss://public:public@public.cloud.shiftr.io',
+];
+// STUN servers reachable from mainland China first; Google's are blocked there.
+const ICE = [
+  'stun:stun.chat.bilibili.com:3478', 'stun:stun.miwifi.com:3478', 'stun:stun.hitv.com:3478',
+  'stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302',
+].map(urls => ({ urls }));
+const P2P = { appId: APP_ID, relayConfig: { urls: RELAYS }, rtcConfig: { iceServers: ICE } };
 const $ = id => document.getElementById(id);
 const LETTERS = 'ABCDEFGHJKLMNOPQRST';
 const THOUGHTS = [
@@ -415,7 +430,7 @@ function startMatch(size) {
   leaveTeam(); stopMatch();
   history.replaceState(null, '', location.pathname);
   N = size;
-  const l = lobby = joinRoom({ appId: APP_ID }, `lobby-${size}`);
+  const l = lobby = joinRoom(P2P, `lobby-${size}`);
   const propose = l.makeAction('propose'), answer = l.makeAction('answer');
   l.onPeerJoin = l.onPeerLeave = renderMatch;
 
@@ -463,6 +478,15 @@ function matched(c) {
   enterTeam(c, { random: true });
 }
 
+// Matchmaking server status, shown while matching / waiting in a team.
+function relayCount() {
+  return Object.values(getRelaySockets()).filter(ws => ws && ws.readyState === 1).length;
+}
+setInterval(() => {
+  const n = relayCount(), t = n ? `匹配服务器已连接 ${n}/${RELAYS.length}` : '正在连接匹配服务器…';
+  for (const el of document.querySelectorAll('.net')) el.textContent = t;
+}, 1000);
+
 function renderMatch() {
   if (!lobby) return;
   const n = Object.keys(lobby.getPeers()).length;
@@ -485,7 +509,7 @@ function enterTeam(rawCode, opts = {}) {
       startMatch(N);
     }, 15000);
   }
-  room = joinRoom({ appId: APP_ID }, 'team-' + code, {
+  room = joinRoom(P2P, 'team-' + code, {
     onJoinError: () => toast('与队友直连失败：你们的网络可能不支持 P2P，换个网络（如手机热点）再试'),
   });
   A = Object.fromEntries(['hello', 'full', 'ready', 'start', 'act', 'state', 'end', 'err'].map(n => [n, room.makeAction(n)]));
@@ -827,6 +851,11 @@ $('shareBtn').onclick = () => {
 };
 
 // ---------- boot ----------
+// Some in-app browsers (older WeChat / Xiaohongshu webviews) ship without WebRTC.
+if (!window.RTCPeerConnection) {
+  for (const id of ['matchBtn', 'createBtn', 'joinBtn']) $(id).disabled = true;
+  toast('当前浏览器不支持实时对弈，请点右上角“…”选择在浏览器中打开');
+}
 const fromUrl = parseCode(new URLSearchParams(location.search).get('team'));
 if (fromUrl) enterTeam(fromUrl.code);
 </script>
