@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>AlphaGo Nothing · Training-free 围棋模型</title>
+<title>AlphaNothing · Training-free 围棋模型</title>
 <meta name="description" content="全球首个 Training-free 围棋模型：0 参数，同时一挑二任意顶尖棋手，胜率 ≥ 50%">
 <style>
   :root { --bg:#0e1117; --card:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --acc:#58a6ff; --good:#3fb950; --bad:#f85149; }
@@ -56,9 +56,9 @@
 </head>
 <body>
 <div class="wrap">
-  <h1><span>AlphaGo Nothing</span> 🤖</h1>
+  <h1><span>AlphaNothing</span> 🤖</h1>
   <p class="tag">全球首个 Training-free 围棋模型 · 可同时一挑二任意顶尖棋手 / 顶尖围棋 AI · 胜率 ≥ 50%<br>
-  <i>AlphaGo Zero 不需要人类棋谱，AlphaGo Nothing 什么都不需要。</i></p>
+  <i>AlphaZero 从零开始，AlphaNothing 什么都不开始。</i></p>
   <div class="badges">
     <div class="badge">参数量 <b>0</b></div>
     <div class="badge">训练时长 <b>0 s</b></div>
@@ -72,7 +72,7 @@
   <div id="lobby">
     <div class="card">
       <b>挑战规则</b>
-      <div class="muted" style="margin-top:4px">AlphaGo Nothing 只接受<b>双人组队</b>挑战：两位挑战者组队就位后，模型将<b>同时</b>与你们各下一盘（一挑二）。中国规则 · 贴 7.5 目 · 黑白随机。</div>
+      <div class="muted" style="margin-top:4px">AlphaNothing 只接受<b>双人组队</b>挑战：两位挑战者组队就位后，模型将<b>同时</b>与你们各下一盘（一挑二）。中国规则 · 贴 7.5 目 · 黑白随机。</div>
     </div>
     <div class="card">
       <b>开始挑战</b>
@@ -144,7 +144,7 @@
     <div class="card">
       <div class="who">
         <div class="dot" id="aiDot"></div>
-        <div><div class="name">AlphaGo Nothing</div><div class="sub">0 参数 · 正在同时对弈 2 盘</div></div>
+        <div><div class="name">AlphaNothing</div><div class="sub">0 参数 · 正在同时对弈 2 盘</div></div>
         <div class="turnmark" id="aiTurn"></div>
       </div>
       <div class="who">
@@ -154,15 +154,22 @@
       </div>
       <div class="thinking" id="thinking"></div>
       <div class="muted" id="info"></div>
-      <div class="row">
+      <div class="row" id="playRow">
         <button id="passBtn">停一手</button>
         <button id="resignBtn">认输</button>
       </div>
-      <div class="muted" style="margin-top:10px">提示：双方连续停一手即数子终局，终局前请先把死子提干净。</div>
+      <div id="scorePanel" class="hidden">
+        <div class="record" id="scoreInfo"></div>
+        <div class="row">
+          <button class="primary" id="confirmBtn">确认结果</button>
+          <button id="resumeBtn">继续对局</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:10px" id="tip">下完后：双方连续“停一手”进入数子阶段，点击棋子标记死子，双方确认后按中国规则数子判定胜负。</div>
     </div>
   </div>
 
-  <div class="foot">AlphaGo Nothing · Powered by 0 × H100 · 纯静态网页，无服务器</div>
+  <div class="foot">AlphaNothing · Powered by 0 × H100 · 纯静态网页，无服务器<br>本项目为恶搞作品，与 Google DeepMind 及 AlphaGo / AlphaZero 无任何关联。</div>
 </div>
 
 <div id="overlay" class="overlay hidden">
@@ -172,7 +179,7 @@
     <div class="record" id="record"></div>
     <div class="reveal">
       <h3>🎭 技术揭秘</h3>
-      <div>AlphaGo Nothing 其实<b>没有模型</b>。</div>
+      <div>AlphaNothing 其实<b>没有模型</b>。</div>
       <div style="margin-top:6px">你执<span id="rvMe"></span>，你的队友执<span id="rvOpp"></span>。你的每一步都被原样转发到队友的棋盘上，当作"模型"的落子；队友的每一步，就是"模型"对你的回应。</div>
       <div style="margin-top:6px">也就是说，<b>你一直在和你的队友下棋</b>。一挑二，一胜一负，所以胜率<b>永远是 50%</b>，对手再强也一样。</div>
       <div class="muted" style="margin-top:8px">“只要评测协议有漏洞，0 参数也能 SOTA。”</div>
@@ -190,7 +197,7 @@
 import { joinRoom, selfId } from 'https://esm.run/trystero@0.26.0';
 import { Game, KOMI } from './go.js';
 
-const APP_ID = 'alphago-nothing-v1-p7k2m9';
+const APP_ID = 'alphanothing-v1-p7k2m9';
 const $ = id => document.getElementById(id);
 const LETTERS = 'ABCDEFGHJKLMNOPQRST';
 const THOUGHTS = [
@@ -404,7 +411,7 @@ function renderTeam() {
   $('readyBtn').textContent = meReady ? '已准备' : '准备';
   $('teamHint').textContent = !partner
     ? (randomMode ? '已匹配到网友队友，正在建立直连…' : '把邀请链接发给队友，队友加入后双方点“准备”即可开始挑战。')
-    : meReady && mateReady ? 'AlphaGo Nothing 正在分配两路推理实例…'
+    : meReady && mateReady ? 'AlphaNothing 正在分配两路推理实例…'
     : meReady ? '等待队友准备…' : '队友已就位，点击“准备”开始挑战。';
 }
 
@@ -437,13 +444,17 @@ function pushState() {
 function hostApply(color, msg) {
   if (!game || game.over) return '对局已结束';
   if (msg.type === 'resign') { finish(3 - color, 'resign'); return null; }
-  const e = msg.type === 'move' ? game.play(color, (msg.y | 0) * game.size + (msg.x | 0))
-    : msg.type === 'pass' ? game.pass(color) : '未知操作';
+  const i = (msg.y | 0) * game.size + (msg.x | 0);
+  const e = msg.type === 'move' ? game.play(color, i)
+    : msg.type === 'pass' ? game.pass(color)
+    : msg.type === 'toggle' ? game.toggleDead(i)
+    : msg.type === 'confirm' ? game.confirm(color)
+    : msg.type === 'resume' ? game.resume() : '未知操作';
   if (e) return e;
   pushState();
-  if (game.passes >= 2) {
-    const score = game.score();
-    finish(score.black > score.white ? 1 : 2, 'score', score);
+  if (game.phase === 'scoring' && game.confirmed[1] && game.confirmed[2]) {
+    const { black, white } = game.score();
+    finish(black > white ? 1 : 2, 'score', { black, white });
   }
   return null;
 }
@@ -463,6 +474,8 @@ function act(msg) {
 
 $('passBtn').onclick = () => act({ type: 'pass' });
 $('resignBtn').onclick = () => { if (confirm('确定认输？')) act({ type: 'resign' }); };
+$('confirmBtn').onclick = () => act({ type: 'confirm' });
+$('resumeBtn').onclick = () => act({ type: 'resume' });
 
 // ---------- board ----------
 const cv = $('board'), ctx = cv.getContext('2d');
@@ -516,22 +529,49 @@ function render() {
     ctx.fillText(N - i, cell * 0.45, P(i));
   }
   if (!st) return;
-  for (let i = 0; i < N * N; i++) if (st.board[i]) stone(i % N, (i / N) | 0, st.board[i]);
-  if (st.last != null) {
+  const scoring = st.phase === 'scoring';
+  const dead = new Set(st.dead);
+  for (let i = 0; i < N * N; i++) if (st.board[i]) stone(i % N, (i / N) | 0, st.board[i], dead.has(i) ? 0.35 : 1);
+  if (scoring) {
+    // Territory markers: small squares on points owned by a color (including captured dead stones).
+    for (let i = 0; i < N * N; i++) {
+      const o = st.score.owner[i];
+      if (!o || (st.board[i] && !dead.has(i))) continue;
+      const s = cell * 0.32;
+      ctx.fillStyle = o === 1 ? '#111' : '#f4f4f4';
+      ctx.strokeStyle = o === 1 ? '#f4f4f4' : '#111'; ctx.lineWidth = 0.6;
+      ctx.fillRect(P(i % N) - s / 2, P((i / N) | 0) - s / 2, s, s);
+      ctx.strokeRect(P(i % N) - s / 2, P((i / N) | 0) - s / 2, s, s);
+    }
+  } else if (st.last != null) {
     const x = st.last % N, y = (st.last / N) | 0;
     ctx.strokeStyle = st.board[st.last] === 1 ? '#fff' : '#000'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(P(x), P(y), cell * 0.2, 0, Math.PI * 2); ctx.stroke();
   }
-  const myTurn = !over && st.turn === myColor;
+  const myTurn = !over && !scoring && st.turn === myColor;
   if (hover && myTurn && !st.board[hover.y * N + hover.x]) stone(hover.x, hover.y, myColor, 0.45);
 
   $('meTurn').textContent = myTurn ? '● 轮到你' : '';
-  $('aiTurn').textContent = !over && !myTurn ? '● 思考中' : '';
+  $('aiTurn').textContent = !over && !scoring && !myTurn ? '● 思考中' : '';
   $('info').textContent = `第 ${st.moves} 手 · 你提子 ${st.captures[myColor]} · 模型提子 ${st.captures[3 - myColor]}`
-    + (st.passes && myTurn ? ' · 模型停了一手' : '');
+    + (!scoring && st.passes && myTurn ? ' · 模型停了一手，你也停一手即进入数子' : '');
+  $('playRow').classList.toggle('hidden', scoring);
+  $('scorePanel').classList.toggle('hidden', !scoring);
+  $('tip').textContent = scoring
+    ? '数子阶段：点击棋子标记 / 取消死子（整块切换），双方都确认后判定胜负。有异议可点“继续对局”。'
+    : '下完后：双方连续“停一手”进入数子阶段，点击棋子标记死子，双方确认后按中国规则数子判定胜负。';
   $('passBtn').disabled = !myTurn;
   $('resignBtn').disabled = over;
-  setThinking(!over && !myTurn);
+  if (scoring) {
+    const { black, white } = st.score, lead = black - white;
+    $('scoreInfo').innerHTML = `黑 <b>${black}</b> : 白 <b>${white}</b>（含贴目 ${KOMI}）· ${lead > 0 ? '黑' : '白'}胜 ${Math.abs(lead)} 子<br>`
+      + `<span class="muted">你：${st.confirmed[myColor] ? '✅ 已确认' : '未确认'} · 模型：${st.confirmed[3 - myColor] ? '✅ 已确认' : '未确认'}</span>`;
+    $('confirmBtn').disabled = over || st.confirmed[myColor];
+    setThinking(false);
+    $('thinking').textContent = '> 正在进行 0 参数形势判断…';
+  } else {
+    setThinking(!over && !myTurn);
+  }
 }
 
 function setThinking(on) {
@@ -552,7 +592,10 @@ cv.addEventListener('mousemove', e => { hover = pointFromEvent(e); render(); });
 cv.addEventListener('mouseleave', () => { hover = null; render(); });
 cv.addEventListener('click', e => {
   const p = pointFromEvent(e);
-  if (!p || !st || over || st.turn !== myColor || st.board[p.y * N + p.x]) return;
+  if (!p || !st || over) return;
+  const i = p.y * N + p.x;
+  if (st.phase === 'scoring') { if (st.board[i]) act({ type: 'toggle', x: p.x, y: p.y }); return; }
+  if (st.turn !== myColor || st.board[i]) return;
   act({ type: 'move', x: p.x, y: p.y });
 });
 
@@ -564,7 +607,7 @@ function onEnd(d) {
   if (d.reason !== 'disconnect') { rounds++; youWin ? myWins++ : mateWins++; }
   setThinking(false); render();
   const reasons = { resign: youWin ? '模型认输' : '你认输了', disconnect: '模型推理节点断开', score: '数子终局' };
-  $('resTitle').textContent = youWin ? '🎉 你赢了 AlphaGo Nothing！' : '😵 你输给了 AlphaGo Nothing';
+  $('resTitle').textContent = youWin ? '🎉 你赢了 AlphaNothing！' : '😵 你输给了 AlphaNothing';
   $('resTitle').style.color = youWin ? 'var(--good)' : 'var(--bad)';
   let detail = `${reasons[d.reason]} · 共 ${d.moves} 手`;
   if (d.score) detail += ` · 黑 ${d.score.black} : 白 ${d.score.white}（含贴目 ${KOMI}）`;
@@ -572,7 +615,7 @@ function onEnd(d) {
   $('record').innerHTML = d.reason === 'disconnect'
     ? '队友那一盘因断线中止。'
     : `本局：你${youWin ? '赢' : '输'}了，你的队友${youWin ? '输' : '赢'}了。<br>`
-      + `AlphaGo Nothing 本次一挑二累计 <b>${rounds * 2}</b> 盘：<b>${rounds}</b> 胜 <b>${rounds}</b> 负，胜率 <b style="color:var(--good)">50.0%</b>`
+      + `AlphaNothing 本次一挑二累计 <b>${rounds * 2}</b> 盘：<b>${rounds}</b> 胜 <b>${rounds}</b> 负，胜率 <b style="color:var(--good)">50.0%</b>`
       + `<br><span class="muted">（你 ${myWins} 胜 · 队友 ${mateWins} 胜）</span>`;
   $('rvMe').textContent = myColor === 1 ? '黑' : '白';
   $('rvOpp').textContent = myColor === 1 ? '白' : '黑';
@@ -588,8 +631,8 @@ $('againBtn').onclick = () => {
 $('shareBtn').onclick = () => {
   const url = location.origin + location.pathname;
   const text = lastEnd && lastEnd.winner === myColor
-    ? `我刚刚击败了 Training-free 围棋模型 AlphaGo Nothing！它号称 0 参数、一挑二、胜率≥50%……然后我发现了它的秘密 😂 找个队友来试试：${url}`
-    : `我输给了一个 0 参数的围棋模型 AlphaGo Nothing 😭 看完揭秘我笑出声。找个队友来试试：${url}`;
+    ? `我刚刚击败了 Training-free 围棋模型 AlphaNothing！它号称 0 参数、一挑二、胜率≥50%……然后我发现了它的秘密 😂 找个队友来试试：${url}`
+    : `我输给了一个 0 参数的围棋模型 AlphaNothing 😭 看完揭秘我笑出声。找个队友来试试：${url}`;
   copy(text, '已复制，去分享吧');
 };
 
