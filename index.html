@@ -75,20 +75,38 @@
       <div class="muted" style="margin-top:4px">AlphaGo Nothing 只接受<b>双人组队</b>挑战：两位挑战者组队就位后，模型将<b>同时</b>与你们各下一盘（一挑二）。中国规则 · 贴 7.5 目 · 黑白随机。</div>
     </div>
     <div class="card">
-      <b>创建队伍</b>
+      <b>开始挑战</b>
       <label>棋盘</label>
       <select id="size">
         <option value="9">9 路（快棋，推荐）</option>
         <option value="13">13 路</option>
         <option value="19">19 路</option>
       </select>
-      <div class="row"><button class="primary" id="createBtn">创建队伍</button></div>
+      <div class="row">
+        <button class="primary" id="matchBtn">随机匹配网友队友</button>
+        <button id="createBtn">创建队伍邀请朋友</button>
+      </div>
     </div>
     <div class="card">
-      <b>加入队伍</b>
-      <label>队伍码（或直接打开队友发来的链接）</label>
+      <b>加入朋友的队伍</b>
+      <label>队伍码（或直接打开朋友发来的链接）</label>
       <input id="codeInput" placeholder="例如 9-k3x8qa" maxlength="32">
       <div class="row"><button id="joinBtn">加入</button></div>
+    </div>
+  </div>
+
+  <!-- Random match -->
+  <div id="match" class="hidden">
+    <div class="card">
+      <div class="who" style="border:none">
+        <div class="spinner"></div>
+        <div><div class="name">正在为你匹配网友队友…</div><div class="sub" id="matchInfo"></div></div>
+      </div>
+      <div class="muted" id="matchHint"></div>
+      <div class="row">
+        <button id="cancelMatchBtn">取消</button>
+        <button id="matchToTeamBtn">改为创建队伍邀请朋友</button>
+      </div>
     </div>
   </div>
 
@@ -100,6 +118,7 @@
       <div class="muted" id="teamBoard"></div>
       <div class="row">
         <button id="copyLinkBtn">复制邀请链接发给队友</button>
+        <button id="rematchBtn" class="hidden">重新匹配网友</button>
         <button id="leaveBtn">离开队伍</button>
       </div>
     </div>
@@ -187,12 +206,15 @@ let game = null;          // authoritative Game, host only
 let myColor = 0, st = null, over = false, playing = false;
 let rounds = 0, myWins = 0, mateWins = 0;
 let hover = null, thinkTimer = null, lastEnd = null;
+let lobby = null, matchTimer = null, pending = null; // random-match lobby
+let randomMode = false, connectTimer = null;        // team formed via random match
 
 const isHost = () => partner && selfId < partner;
 
-function show(id) { for (const s of ['lobby', 'team', 'game']) $(s).classList.toggle('hidden', s !== id); }
+function show(id) { for (const s of ['lobby', 'match', 'team', 'game']) $(s).classList.toggle('hidden', s !== id); }
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), 2600); }
 async function copy(text, msg) { try { await navigator.clipboard.writeText(text); toast(msg); } catch { prompt('复制下面的内容：', text); } }
+const randCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
 const teamLink = () => `${location.origin}${location.pathname}?team=${encodeURIComponent(code)}`;
 
 function parseCode(raw) {
@@ -203,10 +225,11 @@ function parseCode(raw) {
 }
 
 // ---------- lobby ----------
-$('createBtn').onclick = () => {
-  const rand = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
-  enterTeam(`${$('size').value}-${rand}`);
-};
+$('createBtn').onclick = () => enterTeam(`${$('size').value}-${randCode()}`);
+$('matchBtn').onclick = () => startMatch(+$('size').value);
+$('cancelMatchBtn').onclick = () => { stopMatch(); show('lobby'); };
+$('matchToTeamBtn').onclick = () => { stopMatch(); enterTeam(`${N}-${randCode()}`); };
+$('rematchBtn').onclick = () => startMatch(N);
 $('joinBtn').onclick = () => {
   const p = parseCode($('codeInput').value);
   if (!p) return toast('请输入队伍码');
@@ -214,19 +237,93 @@ $('joinBtn').onclick = () => {
 };
 $('copyLinkBtn').onclick = () => copy(teamLink(), '邀请链接已复制，发给队友吧');
 $('leaveBtn').onclick = () => { leaveTeam(); history.replaceState(null, '', location.pathname); show('lobby'); };
-$('readyBtn').onclick = () => {
+$('readyBtn').onclick = setReady;
+
+function setReady() {
+  if (!partner || meReady) return;
   meReady = true;
   A.ready.send(true, { target: partner });
   renderTeam();
   maybeStart();
-};
+}
+
+// ---------- random match ----------
+// Everyone searching sits in a public lobby room per board size. Only the peer with the
+// smaller id proposes, and the target must accept, so two peers never claim the same partner.
+function startMatch(size) {
+  leaveTeam(); stopMatch();
+  history.replaceState(null, '', location.pathname);
+  N = size;
+  const l = lobby = joinRoom({ appId: APP_ID }, `lobby-${size}`);
+  const propose = l.makeAction('propose'), answer = l.makeAction('answer');
+  l.onPeerJoin = l.onPeerLeave = renderMatch;
+
+  propose.onMessage = (d, { peerId }) => {
+    const ok = lobby === l && !pending && peerId < selfId;
+    answer.send({ ok, code: d.code }, { target: peerId });
+    if (ok) matched(d.code);
+  };
+  answer.onMessage = (d, { peerId }) => {
+    if (lobby !== l || !pending || pending.peer !== peerId || pending.code !== d.code) return;
+    clearTimeout(pending.timer);
+    const c = pending.code;
+    pending = null;
+    if (d.ok) matched(c);
+  };
+
+  const tryPropose = () => {
+    if (lobby !== l || pending) return;
+    const cands = Object.keys(l.getPeers()).filter(id => id > selfId);
+    if (!cands.length) return;
+    const peer = cands[Math.floor(Math.random() * cands.length)];
+    const c = `${size}-${randCode()}`;
+    pending = { peer, code: c, timer: setTimeout(() => { if (pending && pending.code === c) pending = null; }, 5000) };
+    propose.send({ code: c }, { target: peer });
+  };
+  matchTimer = setInterval(tryPropose, 1500);
+  show('match');
+  renderMatch();
+}
+
+function stopMatch() {
+  clearInterval(matchTimer); matchTimer = null;
+  if (pending) clearTimeout(pending.timer);
+  pending = null;
+  if (lobby) lobby.leave();
+  lobby = null;
+}
+
+function matched(c) {
+  const l = lobby;
+  lobby = null;
+  clearInterval(matchTimer); matchTimer = null;
+  // Linger briefly so the accept message is flushed before the lobby connection closes.
+  setTimeout(() => l.leave(), 1500);
+  enterTeam(c, { random: true });
+}
+
+function renderMatch() {
+  if (!lobby) return;
+  const n = Object.keys(lobby.getPeers()).length;
+  $('matchInfo').textContent = `${N} 路棋盘 · 匹配大厅中还有 ${n} 位挑战者`;
+  $('matchHint').textContent = n ? '找到挑战者，正在组队…'
+    : '暂时没有其他人在匹配。可以把本页链接分享出去，或者改为创建队伍邀请朋友。';
+}
 
 // ---------- P2P team ----------
-function enterTeam(rawCode) {
-  leaveTeam();
+function enterTeam(rawCode, opts = {}) {
+  leaveTeam(); stopMatch();
   const p = parseCode(rawCode);
   code = p.code; N = p.size;
-  history.replaceState(null, '', `?team=${encodeURIComponent(code)}`);
+  randomMode = !!opts.random;
+  history.replaceState(null, '', randomMode ? location.pathname : `?team=${encodeURIComponent(code)}`);
+  if (randomMode) {
+    connectTimer = setTimeout(() => {
+      if (partner) return;
+      toast('与网友队友直连失败，正在重新匹配…');
+      startMatch(N);
+    }, 15000);
+  }
   room = joinRoom({ appId: APP_ID }, 'team-' + code, {
     onJoinError: () => toast('与队友直连失败：你们的网络可能不支持 P2P，换个网络（如手机热点）再试'),
   });
@@ -240,8 +337,10 @@ function enterTeam(rawCode) {
     if (partner) return A.full.send(true, { target: peerId });
     if (d.partner && d.partner !== selfId) return teamFull();
     partner = peerId;
+    clearTimeout(connectTimer);
     A.hello.send({ partner }, { target: peerId });
     renderTeam();
+    if (randomMode) setReady();
   };
   A.full.onMessage = () => { if (!partner) teamFull(); };
   A.ready.onMessage = (d, { peerId }) => { if (peerId !== partner) return; mateReady = !!d; renderTeam(); maybeStart(); };
@@ -263,6 +362,7 @@ function enterTeam(rawCode) {
 }
 
 function leaveTeam() {
+  clearTimeout(connectTimer);
   if (room) room.leave();
   room = A = partner = game = null;
   meReady = mateReady = playing = false;
@@ -286,13 +386,15 @@ function partnerLeft() {
   playing = false; game = null;
   if ($('overlay').classList.contains('hidden')) show('team');
   renderTeam();
-  toast('队友已离开队伍');
+  toast(randomMode ? '网友队友已离开，可以重新匹配' : '队友已离开队伍');
 }
 
 function renderTeam() {
   $('teamCode').textContent = code;
   $('teamBoard').textContent = `${N} 路棋盘 · 中国规则 · 贴 ${KOMI} 目`;
   $('teamCount').textContent = partner ? 2 : 1;
+  $('copyLinkBtn').classList.toggle('hidden', randomMode);
+  $('rematchBtn').classList.toggle('hidden', !randomMode);
   $('meReadyDot').className = 'dot ' + (meReady ? 'ok' : 'empty');
   $('meReadyTxt').textContent = meReady ? '已准备' : '未准备';
   $('mateReadyDot').className = 'dot ' + (partner && mateReady ? 'ok' : 'empty');
@@ -301,7 +403,7 @@ function renderTeam() {
   $('readyBtn').disabled = !partner || meReady;
   $('readyBtn').textContent = meReady ? '已准备' : '准备';
   $('teamHint').textContent = !partner
-    ? '把邀请链接发给队友，队友加入后双方点“准备”即可开始挑战。'
+    ? (randomMode ? '已匹配到网友队友，正在建立直连…' : '把邀请链接发给队友，队友加入后双方点“准备”即可开始挑战。')
     : meReady && mateReady ? 'AlphaGo Nothing 正在分配两路推理实例…'
     : meReady ? '等待队友准备…' : '队友已就位，点击“准备”开始挑战。';
 }
@@ -479,6 +581,7 @@ function onEnd(d) {
 
 $('againBtn').onclick = () => {
   $('overlay').classList.add('hidden');
+  if (randomMode && !partner) return startMatch(N);
   show('team');
   renderTeam();
 };
