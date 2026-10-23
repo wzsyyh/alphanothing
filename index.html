@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>AlphaGo Nothing · Training-free 围棋模型</title>
+<meta name="description" content="全球首个 Training-free 围棋模型：0 参数，同时一挑二任意顶尖棋手，胜率 ≥ 50%">
+<style>
+  :root { --bg:#0e1117; --card:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --acc:#58a6ff; --good:#3fb950; --bad:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:980px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:30px; margin:8px 0 4px; letter-spacing:.5px; }
+  h1 span { background:linear-gradient(90deg,#58a6ff,#bc8cff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .tag { color:var(--dim); margin:0 0 18px; }
+  .badges { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 20px; }
+  .badge { border:1px solid var(--line); border-radius:999px; padding:3px 12px; font-size:13px; color:var(--dim); }
+  .badge b { color:var(--fg); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .card + .card { margin-top:14px; }
+  label { color:var(--dim); font-size:13px; display:block; margin:10px 0 4px; }
+  select,input { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:#0d1117; color:var(--fg); font-size:15px; }
+  button { padding:11px 18px; border-radius:8px; border:1px solid var(--line); background:#21262d; color:var(--fg); font-size:15px; cursor:pointer; }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#04111f; font-weight:700; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+  .row > * { flex:none; }
+  .hidden { display:none !important; }
+  .game { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; align-items:start; }
+  @media (max-width:820px) { .game { grid-template-columns:1fr; } }
+  canvas { width:100%; aspect-ratio:1; border-radius:10px; display:block; touch-action:manipulation; box-shadow:0 8px 30px rgba(0,0,0,.4); }
+  .who { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .who:last-of-type { border-bottom:none; }
+  .dot { width:22px; height:22px; border-radius:50%; flex:none; }
+  .dot.b { background:radial-gradient(circle at 35% 35%,#666,#000); }
+  .dot.w { background:radial-gradient(circle at 35% 35%,#fff,#bbb); }
+  .dot.empty { border:2px dashed var(--line); }
+  .dot.ok { background:var(--good); }
+  .who .name { font-weight:600; }
+  .who .sub { color:var(--dim); font-size:12px; }
+  .turnmark { margin-left:auto; font-size:12px; color:var(--acc); }
+  .thinking { min-height:48px; margin:12px 0; padding:10px 12px; border-radius:8px; background:#0d1117; border:1px dashed var(--line); color:var(--dim); font-size:13px; font-family:ui-monospace,Menlo,monospace; }
+  .toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#30363d; padding:10px 16px; border-radius:8px; font-size:14px; z-index:20; max-width:90vw; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
+  .modal { max-width:520px; width:100%; max-height:92vh; overflow:auto; }
+  .result { font-size:28px; font-weight:800; margin:0 0 6px; }
+  .record { margin-top:12px; padding:10px 12px; border-radius:8px; background:#0d1117; font-size:14px; }
+  .reveal { margin-top:14px; padding:14px; border-radius:10px; background:linear-gradient(135deg,rgba(88,166,255,.12),rgba(188,140,255,.12)); border:1px solid #3d4f6b; }
+  .reveal h3 { margin:0 0 6px; }
+  .spinner { width:20px; height:20px; border:3px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:spin 1s linear infinite; flex:none; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .muted { color:var(--dim); font-size:13px; }
+  .code { font-family:ui-monospace,Menlo,monospace; font-size:20px; letter-spacing:1px; }
+  .foot { margin-top:26px; color:#484f58; font-size:12px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span>AlphaGo Nothing</span> 🤖</h1>
+  <p class="tag">全球首个 Training-free 围棋模型 · 可同时一挑二任意顶尖棋手 / 顶尖围棋 AI · 胜率 ≥ 50%<br>
+  <i>AlphaGo Zero 不需要人类棋谱，AlphaGo Nothing 什么都不需要。</i></p>
+  <div class="badges">
+    <div class="badge">参数量 <b>0</b></div>
+    <div class="badge">训练时长 <b>0 s</b></div>
+    <div class="badge">训练数据 <b>0 局</b></div>
+    <div class="badge">GPU <b>0 张</b></div>
+    <div class="badge">同时对弈 <b>×2</b></div>
+    <div class="badge">理论胜率 <b style="color:var(--good)">≥ 50%</b>（数学保证）</div>
+  </div>
+
+  <!-- Lobby -->
+  <div id="lobby">
+    <div class="card">
+      <b>挑战规则</b>
+      <div class="muted" style="margin-top:4px">AlphaGo Nothing 只接受<b>双人组队</b>挑战：两位挑战者组队就位后，模型将<b>同时</b>与你们各下一盘（一挑二）。中国规则 · 贴 7.5 目 · 黑白随机。</div>
+    </div>
+    <div class="card">
+      <b>创建队伍</b>
+      <label>棋盘</label>
+      <select id="size">
+        <option value="9">9 路（快棋，推荐）</option>
+        <option value="13">13 路</option>
+        <option value="19">19 路</option>
+      </select>
+      <div class="row"><button class="primary" id="createBtn">创建队伍</button></div>
+    </div>
+    <div class="card">
+      <b>加入队伍</b>
+      <label>队伍码（或直接打开队友发来的链接）</label>
+      <input id="codeInput" placeholder="例如 9-k3x8qa" maxlength="32">
+      <div class="row"><button id="joinBtn">加入</button></div>
+    </div>
+  </div>
+
+  <!-- Team -->
+  <div id="team" class="hidden">
+    <div class="card">
+      <div class="muted">队伍码</div>
+      <div class="code" id="teamCode"></div>
+      <div class="muted" id="teamBoard"></div>
+      <div class="row">
+        <button id="copyLinkBtn">复制邀请链接发给队友</button>
+        <button id="leaveBtn">离开队伍</button>
+      </div>
+    </div>
+    <div class="card">
+      <b>挑战者 <span id="teamCount">1</span> / 2</b>
+      <div class="who">
+        <div class="dot" id="meReadyDot"></div>
+        <div><div class="name">你</div><div class="sub" id="meReadyTxt"></div></div>
+      </div>
+      <div class="who">
+        <div class="dot" id="mateReadyDot"></div>
+        <div><div class="name">队友</div><div class="sub" id="mateReadyTxt"></div></div>
+        <div class="turnmark hidden" id="mateSpin"><div class="spinner"></div></div>
+      </div>
+      <div class="row"><button class="primary" id="readyBtn" disabled>准备</button></div>
+      <div class="muted" id="teamHint" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- Game -->
+  <div id="game" class="game hidden">
+    <canvas id="board"></canvas>
+    <div class="card">
+      <div class="who">
+        <div class="dot" id="aiDot"></div>
+        <div><div class="name">AlphaGo Nothing</div><div class="sub">0 参数 · 正在同时对弈 2 盘</div></div>
+        <div class="turnmark" id="aiTurn"></div>
+      </div>
+      <div class="who">
+        <div class="dot" id="meDot"></div>
+        <div><div class="name">你</div><div class="sub" id="meSub"></div></div>
+        <div class="turnmark" id="meTurn"></div>
+      </div>
+      <div class="thinking" id="thinking"></div>
+      <div class="muted" id="info"></div>
+      <div class="row">
+        <button id="passBtn">停一手</button>
+        <button id="resignBtn">认输</button>
+      </div>
+      <div class="muted" style="margin-top:10px">提示：双方连续停一手即数子终局，终局前请先把死子提干净。</div>
+    </div>
+  </div>
+
+  <div class="foot">AlphaGo Nothing · Powered by 0 × H100 · 纯静态网页，无服务器</div>
+</div>
+
+<div id="overlay" class="overlay hidden">
+  <div class="card modal">
+    <p class="result" id="resTitle"></p>
+    <div class="muted" id="resDetail"></div>
+    <div class="record" id="record"></div>
+    <div class="reveal">
+      <h3>🎭 技术揭秘</h3>
+      <div>AlphaGo Nothing 其实<b>没有模型</b>。</div>
+      <div style="margin-top:6px">你执<span id="rvMe"></span>，你的队友执<span id="rvOpp"></span>。你的每一步都被原样转发到队友的棋盘上，当作"模型"的落子；队友的每一步，就是"模型"对你的回应。</div>
+      <div style="margin-top:6px">也就是说，<b>你一直在和你的队友下棋</b>。一挑二，一胜一负，所以胜率<b>永远是 50%</b>，对手再强也一样。</div>
+      <div class="muted" style="margin-top:8px">“只要评测协议有漏洞，0 参数也能 SOTA。”</div>
+    </div>
+    <div class="row">
+      <button class="primary" id="againBtn">再来一局</button>
+      <button id="shareBtn">复制战绩分享</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script type="module">
+import { joinRoom, selfId } from 'https://esm.run/trystero@0.26.0';
+import { Game, KOMI } from './go.js';
+
+const APP_ID = 'alphago-nothing-v1-p7k2m9';
+const $ = id => document.getElementById(id);
+const LETTERS = 'ABCDEFGHJKLMNOPQRST';
+const THOUGHTS = [
+  '正在加载 0 GB 权重…', '正在进行 0 参数前向传播…', '蒙特卡洛树搜索：已展开 0 个节点',
+  '正在调用 0 张 H100…', 'Attention 计算中（0 heads）…', '正在评估胜率：≥ 50%',
+  '正在同时思考另一盘棋…', 'Scaling law 验证中：0 → 0', '正在检索训练数据（共 0 局）…',
+];
+
+// ---------- session state ----------
+let room = null, A = null, code = '', N = 9;
+let partner = null, meReady = false, mateReady = false;
+let game = null;          // authoritative Game, host only
+let myColor = 0, st = null, over = false, playing = false;
+let rounds = 0, myWins = 0, mateWins = 0;
+let hover = null, thinkTimer = null, lastEnd = null;
+
+const isHost = () => partner && selfId < partner;
+
+function show(id) { for (const s of ['lobby', 'team', 'game']) $(s).classList.toggle('hidden', s !== id); }
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), 2600); }
+async function copy(text, msg) { try { await navigator.clipboard.writeText(text); toast(msg); } catch { prompt('复制下面的内容：', text); } }
+const teamLink = () => `${location.origin}${location.pathname}?team=${encodeURIComponent(code)}`;
+
+function parseCode(raw) {
+  const c = (raw || '').trim().toLowerCase().replace(/[^\w-]/g, '').slice(0, 32);
+  if (!c) return null;
+  const m = c.match(/^(9|13|19)-/);
+  return { code: c, size: m ? +m[1] : 9 };
+}
+
+// ---------- lobby ----------
+$('createBtn').onclick = () => {
+  const rand = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
+  enterTeam(`${$('size').value}-${rand}`);
+};
+$('joinBtn').onclick = () => {
+  const p = parseCode($('codeInput').value);
+  if (!p) return toast('请输入队伍码');
+  enterTeam(p.code);
+};
+$('copyLinkBtn').onclick = () => copy(teamLink(), '邀请链接已复制，发给队友吧');
+$('leaveBtn').onclick = () => { leaveTeam(); history.replaceState(null, '', location.pathname); show('lobby'); };
+$('readyBtn').onclick = () => {
+  meReady = true;
+  A.ready.send(true, { target: partner });
+  renderTeam();
+  maybeStart();
+};
+
+// ---------- P2P team ----------
+function enterTeam(rawCode) {
+  leaveTeam();
+  const p = parseCode(rawCode);
+  code = p.code; N = p.size;
+  history.replaceState(null, '', `?team=${encodeURIComponent(code)}`);
+  room = joinRoom({ appId: APP_ID }, 'team-' + code, {
+    onJoinError: () => toast('与队友直连失败：你们的网络可能不支持 P2P，换个网络（如手机热点）再试'),
+  });
+  A = Object.fromEntries(['hello', 'full', 'ready', 'start', 'act', 'state', 'end', 'err'].map(n => [n, room.makeAction(n)]));
+
+  room.onPeerJoin = id => A.hello.send({ partner }, { target: id });
+  room.onPeerLeave = id => { if (id === partner) partnerLeft(); };
+
+  A.hello.onMessage = (d, { peerId }) => {
+    if (peerId === partner) return;
+    if (partner) return A.full.send(true, { target: peerId });
+    if (d.partner && d.partner !== selfId) return teamFull();
+    partner = peerId;
+    A.hello.send({ partner }, { target: peerId });
+    renderTeam();
+  };
+  A.full.onMessage = () => { if (!partner) teamFull(); };
+  A.ready.onMessage = (d, { peerId }) => { if (peerId !== partner) return; mateReady = !!d; renderTeam(); maybeStart(); };
+
+  // Host -> guest
+  A.start.onMessage = (d, { peerId }) => { if (peerId === partner) beginRound(d.color, d.size); };
+  A.state.onMessage = (d, { peerId }) => { if (peerId === partner) { st = d; render(); } };
+  A.end.onMessage = (d, { peerId }) => { if (peerId === partner) onEnd(d); };
+  A.err.onMessage = (d, { peerId }) => { if (peerId === partner) toast(d); };
+  // Guest -> host
+  A.act.onMessage = (d, { peerId }) => {
+    if (peerId !== partner || !isHost() || !game) return;
+    const e = hostApply(3 - myColor, d);
+    if (e) A.err.send(e, { target: partner });
+  };
+
+  show('team');
+  renderTeam();
+}
+
+function leaveTeam() {
+  if (room) room.leave();
+  room = A = partner = game = null;
+  meReady = mateReady = playing = false;
+  rounds = myWins = mateWins = 0;
+  setThinking(false);
+}
+
+function teamFull() {
+  leaveTeam();
+  history.replaceState(null, '', location.pathname);
+  show('lobby');
+  toast('该队伍已满（2/2），请创建新队伍');
+}
+
+function partnerLeft() {
+  partner = null; meReady = mateReady = false;
+  if (playing && !over) {
+    // Remaining player wins; the "model" lost its connection.
+    onEnd({ winner: myColor, reason: 'disconnect', moves: st ? st.moves : 0 });
+  }
+  playing = false; game = null;
+  if ($('overlay').classList.contains('hidden')) show('team');
+  renderTeam();
+  toast('队友已离开队伍');
+}
+
+function renderTeam() {
+  $('teamCode').textContent = code;
+  $('teamBoard').textContent = `${N} 路棋盘 · 中国规则 · 贴 ${KOMI} 目`;
+  $('teamCount').textContent = partner ? 2 : 1;
+  $('meReadyDot').className = 'dot ' + (meReady ? 'ok' : 'empty');
+  $('meReadyTxt').textContent = meReady ? '已准备' : '未准备';
+  $('mateReadyDot').className = 'dot ' + (partner && mateReady ? 'ok' : 'empty');
+  $('mateReadyTxt').textContent = !partner ? '等待加入…' : mateReady ? '已准备' : '已加入 · 未准备';
+  $('mateSpin').classList.toggle('hidden', !!partner);
+  $('readyBtn').disabled = !partner || meReady;
+  $('readyBtn').textContent = meReady ? '已准备' : '准备';
+  $('teamHint').textContent = !partner
+    ? '把邀请链接发给队友，队友加入后双方点“准备”即可开始挑战。'
+    : meReady && mateReady ? 'AlphaGo Nothing 正在分配两路推理实例…'
+    : meReady ? '等待队友准备…' : '队友已就位，点击“准备”开始挑战。';
+}
+
+// ---------- rounds (host authoritative) ----------
+function maybeStart() {
+  if (!isHost() || !meReady || !mateReady || playing) return;
+  game = new Game(N);
+  const hostColor = Math.random() < 0.5 ? 1 : 2;
+  A.start.send({ color: 3 - hostColor, size: N }, { target: partner });
+  beginRound(hostColor, N);
+  pushState();
+}
+
+function beginRound(color, size) {
+  myColor = color; N = size; over = false; playing = true; st = null; hover = null;
+  meReady = mateReady = false;
+  $('overlay').classList.add('hidden');
+  $('meDot').className = 'dot ' + (myColor === 1 ? 'b' : 'w');
+  $('aiDot').className = 'dot ' + (myColor === 1 ? 'w' : 'b');
+  $('meSub').textContent = myColor === 1 ? '执黑 · 先行' : `执白 · 贴 ${KOMI} 目`;
+  show('game'); resize();
+}
+
+function pushState() {
+  st = game.snapshot();
+  A.state.send(st, { target: partner });
+  render();
+}
+
+function hostApply(color, msg) {
+  if (!game || game.over) return '对局已结束';
+  if (msg.type === 'resign') { finish(3 - color, 'resign'); return null; }
+  const e = msg.type === 'move' ? game.play(color, (msg.y | 0) * game.size + (msg.x | 0))
+    : msg.type === 'pass' ? game.pass(color) : '未知操作';
+  if (e) return e;
+  pushState();
+  if (game.passes >= 2) {
+    const score = game.score();
+    finish(score.black > score.white ? 1 : 2, 'score', score);
+  }
+  return null;
+}
+
+function finish(winner, reason, score) {
+  game.over = true;
+  const d = { winner, reason, score, moves: game.moves };
+  A.end.send(d, { target: partner });
+  onEnd(d);
+}
+
+function act(msg) {
+  if (!playing || over) return;
+  if (isHost()) { const e = hostApply(myColor, msg); if (e) toast(e); }
+  else A.act.send(msg, { target: partner });
+}
+
+$('passBtn').onclick = () => act({ type: 'pass' });
+$('resignBtn').onclick = () => { if (confirm('确定认输？')) act({ type: 'resign' }); };
+
+// ---------- board ----------
+const cv = $('board'), ctx = cv.getContext('2d');
+let W = 0, cell = 0;
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = cv.clientWidth;
+  cv.width = W * dpr; cv.height = W * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cell = W / (N + 1);
+  render();
+}
+window.addEventListener('resize', () => { if (!$('game').classList.contains('hidden')) resize(); });
+const P = i => cell + i * cell;
+
+function stars() {
+  if (N === 9) return [[2,2],[6,2],[2,6],[6,6],[4,4]];
+  if (N === 13) return [[3,3],[9,3],[3,9],[9,9],[6,6]];
+  const a = [3, 9, 15], out = [];
+  for (const x of a) for (const y of a) out.push([x, y]);
+  return out;
+}
+
+function stone(x, y, color, alpha = 1) {
+  const r = cell * 0.47, cx = P(x), cy = P(y);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  if (alpha === 1) { ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = cell * 0.12; ctx.shadowOffsetX = ctx.shadowOffsetY = cell * 0.05; }
+  const g = ctx.createRadialGradient(cx - r / 3, cy - r / 3, r / 8, cx, cy, r);
+  if (color === 1) { g.addColorStop(0, '#666'); g.addColorStop(1, '#0a0a0a'); }
+  else { g.addColorStop(0, '#fff'); g.addColorStop(1, '#c8c8c8'); }
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function render() {
+  if (!W) return;
+  ctx.fillStyle = '#dcb35c'; ctx.fillRect(0, 0, W, W);
+  ctx.strokeStyle = '#3b2a12'; ctx.lineWidth = 1;
+  for (let i = 0; i < N; i++) {
+    ctx.beginPath(); ctx.moveTo(P(0), P(i)); ctx.lineTo(P(N - 1), P(i)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(P(i), P(0)); ctx.lineTo(P(i), P(N - 1)); ctx.stroke();
+  }
+  ctx.fillStyle = '#3b2a12';
+  for (const [x, y] of stars()) { ctx.beginPath(); ctx.arc(P(x), P(y), Math.max(2, cell * 0.1), 0, Math.PI * 2); ctx.fill(); }
+  ctx.font = `${Math.max(9, cell * 0.32)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#5a4320';
+  for (let i = 0; i < N; i++) {
+    ctx.fillText(LETTERS[i], P(i), cell * 0.45);
+    ctx.fillText(N - i, cell * 0.45, P(i));
+  }
+  if (!st) return;
+  for (let i = 0; i < N * N; i++) if (st.board[i]) stone(i % N, (i / N) | 0, st.board[i]);
+  if (st.last != null) {
+    const x = st.last % N, y = (st.last / N) | 0;
+    ctx.strokeStyle = st.board[st.last] === 1 ? '#fff' : '#000'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(P(x), P(y), cell * 0.2, 0, Math.PI * 2); ctx.stroke();
+  }
+  const myTurn = !over && st.turn === myColor;
+  if (hover && myTurn && !st.board[hover.y * N + hover.x]) stone(hover.x, hover.y, myColor, 0.45);
+
+  $('meTurn').textContent = myTurn ? '● 轮到你' : '';
+  $('aiTurn').textContent = !over && !myTurn ? '● 思考中' : '';
+  $('info').textContent = `第 ${st.moves} 手 · 你提子 ${st.captures[myColor]} · 模型提子 ${st.captures[3 - myColor]}`
+    + (st.passes && myTurn ? ' · 模型停了一手' : '');
+  $('passBtn').disabled = !myTurn;
+  $('resignBtn').disabled = over;
+  setThinking(!over && !myTurn);
+}
+
+function setThinking(on) {
+  const el = $('thinking');
+  if (!on) { clearInterval(thinkTimer); thinkTimer = null; el.textContent = over ? '' : '> 等待你的落子'; return; }
+  if (thinkTimer) return;
+  let k = Math.floor(Math.random() * THOUGHTS.length);
+  const tick = () => { el.textContent = '> ' + THOUGHTS[k++ % THOUGHTS.length]; };
+  tick(); thinkTimer = setInterval(tick, 1600);
+}
+
+function pointFromEvent(e) {
+  const r = cv.getBoundingClientRect();
+  const x = Math.round((e.clientX - r.left) / cell - 1), y = Math.round((e.clientY - r.top) / cell - 1);
+  return x >= 0 && y >= 0 && x < N && y < N ? { x, y } : null;
+}
+cv.addEventListener('mousemove', e => { hover = pointFromEvent(e); render(); });
+cv.addEventListener('mouseleave', () => { hover = null; render(); });
+cv.addEventListener('click', e => {
+  const p = pointFromEvent(e);
+  if (!p || !st || over || st.turn !== myColor || st.board[p.y * N + p.x]) return;
+  act({ type: 'move', x: p.x, y: p.y });
+});
+
+// ---------- end ----------
+function onEnd(d) {
+  if (over) return;
+  over = true; playing = false; game = null; lastEnd = d;
+  const youWin = d.winner === myColor;
+  if (d.reason !== 'disconnect') { rounds++; youWin ? myWins++ : mateWins++; }
+  setThinking(false); render();
+  const reasons = { resign: youWin ? '模型认输' : '你认输了', disconnect: '模型推理节点断开', score: '数子终局' };
+  $('resTitle').textContent = youWin ? '🎉 你赢了 AlphaGo Nothing！' : '😵 你输给了 AlphaGo Nothing';
+  $('resTitle').style.color = youWin ? 'var(--good)' : 'var(--bad)';
+  let detail = `${reasons[d.reason]} · 共 ${d.moves} 手`;
+  if (d.score) detail += ` · 黑 ${d.score.black} : 白 ${d.score.white}（含贴目 ${KOMI}）`;
+  $('resDetail').textContent = detail;
+  $('record').innerHTML = d.reason === 'disconnect'
+    ? '队友那一盘因断线中止。'
+    : `本局：你${youWin ? '赢' : '输'}了，你的队友${youWin ? '输' : '赢'}了。<br>`
+      + `AlphaGo Nothing 本次一挑二累计 <b>${rounds * 2}</b> 盘：<b>${rounds}</b> 胜 <b>${rounds}</b> 负，胜率 <b style="color:var(--good)">50.0%</b>`
+      + `<br><span class="muted">（你 ${myWins} 胜 · 队友 ${mateWins} 胜）</span>`;
+  $('rvMe').textContent = myColor === 1 ? '黑' : '白';
+  $('rvOpp').textContent = myColor === 1 ? '白' : '黑';
+  $('overlay').classList.remove('hidden');
+}
+
+$('againBtn').onclick = () => {
+  $('overlay').classList.add('hidden');
+  show('team');
+  renderTeam();
+};
+$('shareBtn').onclick = () => {
+  const url = location.origin + location.pathname;
+  const text = lastEnd && lastEnd.winner === myColor
+    ? `我刚刚击败了 Training-free 围棋模型 AlphaGo Nothing！它号称 0 参数、一挑二、胜率≥50%……然后我发现了它的秘密 😂 找个队友来试试：${url}`
+    : `我输给了一个 0 参数的围棋模型 AlphaGo Nothing 😭 看完揭秘我笑出声。找个队友来试试：${url}`;
+  copy(text, '已复制，去分享吧');
+};
+
+// ---------- boot ----------
+const fromUrl = parseCode(new URLSearchParams(location.search).get('team'));
+if (fromUrl) enterTeam(fromUrl.code);
+</script>
+</body>
+</html>
