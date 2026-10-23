@@ -5,184 +5,329 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>AlphaNothing · Training-free 围棋模型</title>
 <meta name="description" content="全球首个 Training-free 围棋模型：0 参数，同时一挑二任意顶尖棋手，胜率 ≥ 50%">
+<meta name="theme-color" content="#0a0a0b">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cdefs%3E%3CradialGradient id=%27w%27 cx=%27.35%27 cy=%27.3%27%3E%3Cstop offset=%270%27 stop-color=%27%23fff%27/%3E%3Cstop offset=%271%27 stop-color=%27%23c8c8c0%27/%3E%3C/radialGradient%3E%3CradialGradient id=%27b%27 cx=%27.35%27 cy=%27.3%27%3E%3Cstop offset=%270%27 stop-color=%27%23777%27/%3E%3Cstop offset=%271%27 stop-color=%27%23000%27/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx=%2712%27 cy=%2712%27 r=%2710%27 fill=%27url(%23w)%27/%3E%3Ccircle cx=%2720%27 cy=%2720%27 r=%2710%27 fill=%27url(%23b)%27 stroke=%27%230a0a0b%27 stroke-width=%271.5%27/%3E%3C/svg%3E">
 <style>
-  :root { --bg:#0e1117; --card:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e; --acc:#58a6ff; --good:#3fb950; --bad:#f85149; }
+  :root {
+    --bg:#0a0a0b; --panel:rgba(255,255,255,.028); --panel2:rgba(255,255,255,.05);
+    --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.16);
+    --fg:#ededea; --dim:#9a9a96; --faint:#5f5f5c;
+    --gold:#d8bc8e; --gold2:#a8844f; --good:#8fd3ad; --bad:#ec9286;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Songti SC","Noto Serif SC","Source Han Serif SC",STSong,Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --r:16px;
+  }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
-  .wrap { max-width:980px; margin:0 auto; padding:20px 16px 40px; }
-  h1 { font-size:30px; margin:8px 0 4px; letter-spacing:.5px; }
-  h1 span { background:linear-gradient(90deg,#58a6ff,#bc8cff); -webkit-background-clip:text; background-clip:text; color:transparent; }
-  .tag { color:var(--dim); margin:0 0 18px; }
-  .badges { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 20px; }
-  .badge { border:1px solid var(--line); border-radius:999px; padding:3px 12px; font-size:13px; color:var(--dim); }
-  .badge b { color:var(--fg); }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
-  .card + .card { margin-top:14px; }
-  label { color:var(--dim); font-size:13px; display:block; margin:10px 0 4px; }
-  select,input { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:#0d1117; color:var(--fg); font-size:15px; }
-  button { padding:11px 18px; border-radius:8px; border:1px solid var(--line); background:#21262d; color:var(--fg); font-size:15px; cursor:pointer; }
-  button.primary { background:var(--acc); border-color:var(--acc); color:#04111f; font-weight:700; }
-  button:disabled { opacity:.4; cursor:not-allowed; }
-  .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
-  .row > * { flex:none; }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0; min-height:100vh; color:var(--fg); font:15px/1.65 var(--sans); letter-spacing:.01em;
+    background:
+      radial-gradient(1100px 620px at 78% -12%, rgba(216,188,142,.13), transparent 62%),
+      radial-gradient(900px 520px at -12% 18%, rgba(255,255,255,.035), transparent 60%),
+      var(--bg);
+    -webkit-font-smoothing:antialiased;
+  }
+  /* faint Go grid in the background */
+  body::before {
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image:linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+    background-size:56px 56px;
+    -webkit-mask-image:radial-gradient(ellipse 70% 55% at 50% 0%, #000 20%, transparent 75%);
+    mask-image:radial-gradient(ellipse 70% 55% at 50% 0%, #000 20%, transparent 75%);
+  }
+  .wrap { position:relative; z-index:1; max-width:1080px; margin:0 auto; padding:0 24px 56px; }
   .hidden { display:none !important; }
-  .game { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; align-items:start; }
-  @media (max-width:820px) { .game { grid-template-columns:1fr; } }
-  canvas { width:100%; aspect-ratio:1; border-radius:10px; display:block; touch-action:manipulation; box-shadow:0 8px 30px rgba(0,0,0,.4); }
-  .who { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
-  .who:last-of-type { border-bottom:none; }
-  .dot { width:22px; height:22px; border-radius:50%; flex:none; }
-  .dot.b { background:radial-gradient(circle at 35% 35%,#666,#000); }
-  .dot.w { background:radial-gradient(circle at 35% 35%,#fff,#bbb); }
-  .dot.empty { border:2px dashed var(--line); }
-  .dot.ok { background:var(--good); }
-  .who .name { font-weight:600; }
-  .who .sub { color:var(--dim); font-size:12px; }
-  .turnmark { margin-left:auto; font-size:12px; color:var(--acc); }
-  .thinking { min-height:48px; margin:12px 0; padding:10px 12px; border-radius:8px; background:#0d1117; border:1px dashed var(--line); color:var(--dim); font-size:13px; font-family:ui-monospace,Menlo,monospace; }
-  .toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#30363d; padding:10px 16px; border-radius:8px; font-size:14px; z-index:20; max-width:90vw; }
-  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; padding:16px; z-index:10; }
-  .modal { max-width:520px; width:100%; max-height:92vh; overflow:auto; }
-  .result { font-size:28px; font-weight:800; margin:0 0 6px; }
-  .record { margin-top:12px; padding:10px 12px; border-radius:8px; background:#0d1117; font-size:14px; }
-  .reveal { margin-top:14px; padding:14px; border-radius:10px; background:linear-gradient(135deg,rgba(88,166,255,.12),rgba(188,140,255,.12)); border:1px solid #3d4f6b; }
-  .reveal h3 { margin:0 0 6px; }
-  .spinner { width:20px; height:20px; border:3px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:spin 1s linear infinite; flex:none; }
+  b { font-weight:600; }
+
+  /* nav */
+  .nav { display:flex; align-items:center; justify-content:space-between; padding:22px 0; }
+  .brand { display:flex; align-items:center; gap:12px; font-weight:600; letter-spacing:.02em; }
+  .mark { position:relative; width:26px; height:26px; }
+  .mark i { position:absolute; width:18px; height:18px; border-radius:50%; }
+  .mark i:first-child { left:0; top:0; background:radial-gradient(circle at 35% 30%, #fff, #cfcfc8 70%); }
+  .mark i:last-child { right:0; bottom:0; background:radial-gradient(circle at 35% 30%, #666, #050505 70%); box-shadow:0 0 0 1.5px var(--bg); }
+  .pill { font:500 11px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--dim); border:1px solid var(--line); border-radius:999px; padding:7px 11px; background:var(--panel); }
+  .pill .live { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--good); margin-right:7px; box-shadow:0 0 10px var(--good); vertical-align:1px; }
+
+  /* hero */
+  .hero { padding:56px 0 34px; }
+  .eyebrow { font:500 12px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase; color:var(--gold); }
+  h1 { font:400 clamp(52px, 10vw, 104px)/.98 var(--serif); letter-spacing:-.025em; margin:22px 0 22px; }
+  h1 em { font-style:italic; background:linear-gradient(100deg, #f3e3c3 0%, var(--gold) 45%, var(--gold2) 100%); -webkit-background-clip:text; background-clip:text; color:transparent; padding-right:.06em; }
+  .lead { font-size:clamp(16px, 2.1vw, 19px); color:#c9c9c4; max-width:640px; margin:0; }
+  .quote { margin:18px 0 0; font:italic 400 17px/1.5 var(--serif); color:var(--dim); }
+
+  /* model card */
+  .spec { display:grid; grid-template-columns:repeat(6, 1fr); border:1px solid var(--line); border-radius:var(--r); background:var(--panel); margin:40px 0 10px; overflow:hidden; }
+  .spec > div { padding:18px 18px 16px; border-left:1px solid var(--line); }
+  .spec > div:first-child { border-left:none; }
+  .spec .k { font:500 10.5px/1.3 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--faint); }
+  .spec .v { font:400 30px/1.1 var(--serif); margin-top:10px; letter-spacing:-.01em; }
+  .spec .v small { font:400 13px var(--sans); color:var(--dim); margin-left:4px; }
+  .spec .v.gold { color:var(--gold); }
+  .note { font-size:12px; color:var(--faint); }
+  @media (max-width:900px) { .spec { grid-template-columns:repeat(3, 1fr); } .spec > div:nth-child(4) { border-left:none; } .spec > div:nth-child(n+4) { border-top:1px solid var(--line); } }
+  @media (max-width:520px) { .spec { grid-template-columns:repeat(2, 1fr); } .spec > div { border-left:none !important; border-top:1px solid var(--line); } .spec > div:nth-child(-n+2) { border-top:none; } .spec > div:nth-child(even) { border-left:1px solid var(--line) !important; } }
+
+  /* panels */
+  .panel { border:1px solid var(--line); border-radius:var(--r); background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.018)); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 30px 60px -30px rgba(0,0,0,.6); }
+  .pad { padding:28px; }
+  .cta { display:grid; grid-template-columns:1.35fr 1fr; margin-top:28px; }
+  .cta > div { padding:30px; }
+  .cta > div + div { border-left:1px solid var(--line); }
+  @media (max-width:760px) { .cta { grid-template-columns:1fr; } .cta > div + div { border-left:none; border-top:1px solid var(--line); } }
+  h2 { font:400 26px/1.2 var(--serif); margin:0 0 6px; letter-spacing:-.01em; }
+  h3 { font:400 20px/1.3 var(--serif); margin:0 0 4px; }
+  .muted { color:var(--dim); font-size:13.5px; }
+  .faint { color:var(--faint); font-size:12.5px; }
+  .label { display:block; font:500 10.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin:22px 0 10px; }
+
+  .seg { display:inline-flex; padding:4px; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,.25); }
+  .seg button { border:none; background:transparent; color:var(--dim); padding:9px 18px; border-radius:9px; font:500 14px var(--sans); }
+  .seg button.on { background:rgba(255,255,255,.09); color:var(--fg); box-shadow:0 1px 0 rgba(255,255,255,.08) inset; }
+  .seg button:hover:not(.on) { color:var(--fg); }
+
+  input[type=text] { width:100%; padding:13px 14px; border-radius:12px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--fg); font:15px var(--mono); letter-spacing:.04em; outline:none; transition:border-color .2s; }
+  input[type=text]:focus { border-color:rgba(216,188,142,.5); }
+  input::placeholder { color:var(--faint); }
+
+  button { font:500 14.5px var(--sans); cursor:pointer; border-radius:12px; padding:12px 18px; border:1px solid var(--line2); background:rgba(255,255,255,.04); color:var(--fg); transition:background .2s, border-color .2s, transform .1s, opacity .2s; }
+  button:hover:not(:disabled) { background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.24); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  button.primary { border:none; color:#1b1408; font-weight:600; background:linear-gradient(180deg, #ecd6ad, var(--gold) 55%, #c4a06c); box-shadow:0 1px 0 rgba(255,255,255,.5) inset, 0 10px 30px -10px rgba(216,188,142,.55); }
+  button.primary:hover:not(:disabled) { background:linear-gradient(180deg, #f3e1bf, #e0c597 55%, #cca978); }
+  button.ghost { border-color:transparent; background:transparent; color:var(--dim); }
+  button.ghost:hover:not(:disabled) { color:var(--fg); background:rgba(255,255,255,.05); border-color:transparent; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:22px; }
+
+  /* protocol steps */
+  .steps { display:grid; grid-template-columns:repeat(3, 1fr); gap:0; margin-top:56px; border-top:1px solid var(--line); }
+  .steps > div { padding:24px 24px 0 0; }
+  .steps .n { font:500 12px var(--mono); color:var(--gold); letter-spacing:.1em; }
+  .steps h3 { margin-top:10px; }
+  @media (max-width:760px) { .steps { grid-template-columns:1fr; } }
+  .sectitle { font:500 11px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase; color:var(--faint); margin:56px 0 0; }
+  .sectitle + .steps { margin-top:18px; }
+
+  /* compact stage for match / team */
+  .stage { max-width:620px; margin:48px auto 0; }
+  .radar { position:relative; width:64px; height:64px; margin:4px 0 22px; }
+  .radar i { position:absolute; inset:0; border-radius:50%; border:1px solid var(--gold); opacity:0; animation:ping 2.4s cubic-bezier(.2,.6,.3,1) infinite; }
+  .radar i:nth-child(2) { animation-delay:.8s; } .radar i:nth-child(3) { animation-delay:1.6s; }
+  .radar b { position:absolute; inset:24px; border-radius:50%; background:var(--gold); box-shadow:0 0 18px var(--gold); }
+  @keyframes ping { 0% { transform:scale(.3); opacity:.9; } 100% { transform:scale(1.15); opacity:0; } }
+  .code { font:500 30px/1.2 var(--mono); letter-spacing:.06em; color:var(--gold); margin:6px 0 4px; }
+  .seats { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:22px; }
+  .seat { display:flex; align-items:center; gap:12px; padding:16px; border:1px solid var(--line); border-radius:14px; background:rgba(0,0,0,.2); }
+  .seat .name { font-weight:600; }
+  .seat .sub { font-size:12.5px; color:var(--dim); }
+  .seat .spin { margin-left:auto; }
+  .spinner { width:18px; height:18px; border:2px solid var(--line2); border-top-color:var(--gold); border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
-  .muted { color:var(--dim); font-size:13px; }
-  .code { font-family:ui-monospace,Menlo,monospace; font-size:20px; letter-spacing:1px; }
-  .foot { margin-top:26px; color:#484f58; font-size:12px; text-align:center; }
+  .dot { width:22px; height:22px; border-radius:50%; flex:none; }
+  .dot.b { background:radial-gradient(circle at 35% 30%, #6a6a6a, #111 55%, #000); box-shadow:0 2px 6px rgba(0,0,0,.5); }
+  .dot.w { background:radial-gradient(circle at 35% 30%, #fff, #ecece6 55%, #c8c8c0); box-shadow:0 2px 6px rgba(0,0,0,.5); }
+  .dot.empty { border:1.5px dashed var(--line2); }
+  .dot.ok { background:var(--good); box-shadow:0 0 14px rgba(143,211,173,.55); }
+
+  /* game */
+  .game { display:grid; grid-template-columns:minmax(0, 1fr) 330px; gap:24px; align-items:start; margin-top:8px; }
+  @media (max-width:860px) { .game { grid-template-columns:1fr; } }
+  .boardwrap { position:relative; border-radius:18px; padding:10px; background:linear-gradient(145deg, rgba(255,255,255,.07), rgba(255,255,255,.015)); border:1px solid var(--line); box-shadow:0 40px 90px -30px rgba(0,0,0,.85); }
+  canvas { width:100%; aspect-ratio:1; border-radius:10px; display:block; touch-action:manipulation; cursor:pointer; }
+  .side { padding:8px 0; }
+  .player { display:flex; align-items:center; gap:12px; padding:16px 22px; }
+  .player + .player { border-top:1px solid var(--line); }
+  .player .name { font-weight:600; }
+  .player .sub { font-size:12.5px; color:var(--dim); }
+  .turnmark { margin-left:auto; font:500 11px/1 var(--mono); letter-spacing:.06em; color:var(--gold); border:1px solid rgba(216,188,142,.35); background:rgba(216,188,142,.08); padding:6px 9px; border-radius:999px; white-space:nowrap; }
+  .turnmark:empty { display:none; }
+  .block { padding:18px 22px; border-top:1px solid var(--line); }
+  .console { font:12.5px/1.75 var(--mono); color:var(--dim); background:rgba(0,0,0,.35); border:1px solid var(--line); border-radius:12px; padding:12px 14px; min-height:104px; }
+  .console .hd { display:flex; justify-content:space-between; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin-bottom:6px; }
+  .ln { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; opacity:.45; }
+  .ln::before { content:"› "; color:var(--gold2); }
+  .ln.cur { opacity:1; color:#d8d8d3; }
+  .ln.cur::after { content:""; display:inline-block; width:7px; height:13px; background:var(--gold); margin-left:4px; vertical-align:-2px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .stat { font:12.5px var(--mono); color:var(--dim); }
+  .scorebox { padding:14px; border-radius:12px; border:1px solid rgba(216,188,142,.25); background:rgba(216,188,142,.06); font-size:14px; }
+  .scorebox b { font:500 22px var(--serif); }
+
+  /* overlay */
+  .overlay { position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(5,5,6,.66); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); animation:fade .25s ease; }
+  .modal { width:100%; max-width:560px; max-height:92vh; overflow:auto; padding:32px; background:linear-gradient(180deg, #17171a, #111113); animation:rise .35s cubic-bezier(.2,.8,.2,1); }
+  @keyframes fade { from { opacity:0; } } @keyframes rise { from { opacity:0; transform:translateY(12px) scale(.985); } }
+  .result { font:400 38px/1.15 var(--serif); margin:10px 0 8px; letter-spacing:-.01em; }
+  .record { margin-top:20px; padding:16px; border-radius:12px; background:rgba(0,0,0,.3); border:1px solid var(--line); font-size:14px; }
+  .reveal { margin-top:16px; padding:18px 18px 18px 20px; border-radius:12px; border:1px solid rgba(216,188,142,.28); background:linear-gradient(135deg, rgba(216,188,142,.10), rgba(216,188,142,.02)); position:relative; }
+  .reveal .eyebrow { font-size:11px; }
+  .reveal p { margin:10px 0 0; }
+  .reveal .q { font:italic 16px/1.5 var(--serif); color:var(--dim); margin-top:14px; }
+
+  .toast { position:fixed; left:50%; bottom:32px; transform:translateX(-50%); z-index:20; max-width:90vw; padding:11px 18px; border-radius:999px; font-size:14px; background:rgba(30,30,33,.92); border:1px solid var(--line2); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); box-shadow:0 20px 40px -12px rgba(0,0,0,.6); }
+
+  @media (max-width:600px) {
+    .wrap { padding:0 16px 40px; }
+    .pill-long { display:none; }
+    .hero { padding:36px 0 24px; }
+    .cta > div, .pad, .modal { padding:22px; }
+    .cta .row button, .stage .row button:not(.ghost) { flex:1 1 100%; }
+    .boardwrap { padding:6px; border-radius:14px; }
+    .game { gap:16px; }
+    .player, .block { padding-left:18px; padding-right:18px; }
+    .seats { grid-template-columns:1fr; }
+    .result { font-size:30px; }
+  }
+  .foot { margin-top:72px; padding-top:22px; border-top:1px solid var(--line); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; font-size:12px; color:var(--faint); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1><span>AlphaNothing</span> 🤖</h1>
-  <p class="tag">全球首个 Training-free 围棋模型 · 可同时一挑二任意顶尖棋手 / 顶尖围棋 AI · 胜率 ≥ 50%<br>
-  <i>AlphaZero 从零开始，AlphaNothing 什么都不开始。</i></p>
-  <div class="badges">
-    <div class="badge">参数量 <b>0</b></div>
-    <div class="badge">训练时长 <b>0 s</b></div>
-    <div class="badge">训练数据 <b>0 局</b></div>
-    <div class="badge">GPU <b>0 张</b></div>
-    <div class="badge">同时对弈 <b>×2</b></div>
-    <div class="badge">理论胜率 <b style="color:var(--good)">≥ 50%</b>（数学保证）</div>
-  </div>
+  <nav class="nav">
+    <div class="brand"><span class="mark"><i></i><i></i></span>AlphaNothing</div>
+    <span class="pill"><span class="live"></span><span class="pill-long">Research Preview · </span>v1.0</span>
+  </nav>
 
   <!-- Lobby -->
   <div id="lobby">
-    <div class="card">
-      <b>挑战规则</b>
-      <div class="muted" style="margin-top:4px">AlphaNothing 只接受<b>双人组队</b>挑战：两位挑战者组队就位后，模型将<b>同时</b>与你们各下一盘（一挑二）。中国规则 · 贴 7.5 目 · 黑白随机。</div>
-    </div>
-    <div class="card">
-      <b>开始挑战</b>
-      <label>棋盘</label>
-      <select id="size">
-        <option value="9">9 路（快棋，推荐）</option>
-        <option value="13">13 路</option>
-        <option value="19">19 路</option>
-      </select>
-      <div class="row">
-        <button class="primary" id="matchBtn">随机匹配网友队友</button>
-        <button id="createBtn">创建队伍邀请朋友</button>
+    <section class="hero">
+      <div class="eyebrow">Technical Report · 2026</div>
+      <h1>Alpha<em>Nothing</em></h1>
+      <p class="lead">全球首个 Training-free 围棋模型。无需任何训练，即可同时一挑二任意顶尖棋手或顶尖围棋 AI，胜率不低于 50%。</p>
+      <p class="quote">“AlphaZero 从零开始，AlphaNothing 什么都不开始。”</p>
+
+      <div class="spec">
+        <div><div class="k">Parameters</div><div class="v">0</div></div>
+        <div><div class="k">Training compute</div><div class="v">0<small>FLOPs</small></div></div>
+        <div><div class="k">Training data</div><div class="v">0<small>局</small></div></div>
+        <div><div class="k">Inference</div><div class="v">0<small>× H100</small></div></div>
+        <div><div class="k">Concurrency</div><div class="v">×2</div></div>
+        <div><div class="k">Win rate*</div><div class="v gold">≥ 50%</div></div>
+      </div>
+      <div class="note">* 对任意对手成立，数学保证。</div>
+    </section>
+
+    <div class="panel cta">
+      <div>
+        <h2>开始挑战</h2>
+        <div class="muted">AlphaNothing 只接受双人组队挑战：两位挑战者就位后，模型将同时与你们各下一盘。中国规则 · 贴 7.5 目 · 黑白随机。</div>
+        <span class="label">Board</span>
+        <div class="seg" id="sizeSeg">
+          <button data-size="9" class="on">9 路</button><button data-size="13">13 路</button><button data-size="19">19 路</button>
+        </div>
+        <input type="hidden" id="size" value="9">
+        <div class="row">
+          <button class="primary" id="matchBtn">随机匹配网友队友 →</button>
+          <button id="createBtn">创建队伍邀请朋友</button>
+        </div>
+      </div>
+      <div>
+        <h2>加入队伍</h2>
+        <div class="muted">输入朋友的队伍码，或直接打开朋友发来的链接。</div>
+        <span class="label">Team code</span>
+        <input type="text" id="codeInput" placeholder="9-k3x8qa" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="row"><button id="joinBtn">加入</button></div>
       </div>
     </div>
-    <div class="card">
-      <b>加入朋友的队伍</b>
-      <label>队伍码（或直接打开朋友发来的链接）</label>
-      <input id="codeInput" placeholder="例如 9-k3x8qa" maxlength="32">
-      <div class="row"><button id="joinBtn">加入</button></div>
+
+    <div class="sectitle">Evaluation protocol</div>
+    <div class="steps">
+      <div><div class="n">01</div><h3>组队</h3><div class="muted">两位挑战者组成一队：随机匹配网友，或邀请朋友。</div></div>
+      <div><div class="n">02</div><h3>一挑二</h3><div class="muted">模型同时与两位挑战者各下一盘，双方实时对弈。</div></div>
+      <div><div class="n">03</div><h3>赛后揭秘</h3><div class="muted">终局后公开模型的全部技术细节。</div></div>
     </div>
   </div>
 
   <!-- Random match -->
   <div id="match" class="hidden">
-    <div class="card">
-      <div class="who" style="border:none">
-        <div class="spinner"></div>
-        <div><div class="name">正在为你匹配网友队友…</div><div class="sub" id="matchInfo"></div></div>
-      </div>
-      <div class="muted" id="matchHint"></div>
+    <div class="panel pad stage">
+      <div class="radar"><i></i><i></i><i></i><b></b></div>
+      <h2>正在为你匹配网友队友</h2>
+      <div class="stat" id="matchInfo"></div>
+      <p class="muted" id="matchHint"></p>
       <div class="row">
-        <button id="cancelMatchBtn">取消</button>
-        <button id="matchToTeamBtn">改为创建队伍邀请朋友</button>
+        <button id="matchToTeamBtn">改为邀请朋友</button>
+        <button class="ghost" id="cancelMatchBtn">取消</button>
       </div>
     </div>
   </div>
 
   <!-- Team -->
   <div id="team" class="hidden">
-    <div class="card">
-      <div class="muted">队伍码</div>
+    <div class="panel pad stage">
+      <span class="label" style="margin-top:0">Team code</span>
       <div class="code" id="teamCode"></div>
-      <div class="muted" id="teamBoard"></div>
+      <div class="stat" id="teamBoard"></div>
+
+      <span class="label">Challengers · <span id="teamCount">1</span> / 2</span>
+      <div class="seats">
+        <div class="seat"><div class="dot" id="meReadyDot"></div><div><div class="name">你</div><div class="sub" id="meReadyTxt"></div></div></div>
+        <div class="seat"><div class="dot" id="mateReadyDot"></div><div><div class="name">队友</div><div class="sub" id="mateReadyTxt"></div></div><div class="spin hidden" id="mateSpin"><div class="spinner"></div></div></div>
+      </div>
+      <p class="muted" id="teamHint" style="margin:16px 0 0"></p>
       <div class="row">
-        <button id="copyLinkBtn">复制邀请链接发给队友</button>
+        <button class="primary" id="readyBtn" disabled>准备</button>
+        <button id="copyLinkBtn">复制邀请链接</button>
         <button id="rematchBtn" class="hidden">重新匹配网友</button>
-        <button id="leaveBtn">离开队伍</button>
+        <button class="ghost" id="leaveBtn">离开队伍</button>
       </div>
-    </div>
-    <div class="card">
-      <b>挑战者 <span id="teamCount">1</span> / 2</b>
-      <div class="who">
-        <div class="dot" id="meReadyDot"></div>
-        <div><div class="name">你</div><div class="sub" id="meReadyTxt"></div></div>
-      </div>
-      <div class="who">
-        <div class="dot" id="mateReadyDot"></div>
-        <div><div class="name">队友</div><div class="sub" id="mateReadyTxt"></div></div>
-        <div class="turnmark hidden" id="mateSpin"><div class="spinner"></div></div>
-      </div>
-      <div class="row"><button class="primary" id="readyBtn" disabled>准备</button></div>
-      <div class="muted" id="teamHint" style="margin-top:10px"></div>
     </div>
   </div>
 
   <!-- Game -->
   <div id="game" class="game hidden">
-    <canvas id="board"></canvas>
-    <div class="card">
-      <div class="who">
+    <div class="boardwrap"><canvas id="board"></canvas></div>
+    <div class="panel side">
+      <div class="player">
         <div class="dot" id="aiDot"></div>
         <div><div class="name">AlphaNothing</div><div class="sub">0 参数 · 正在同时对弈 2 盘</div></div>
         <div class="turnmark" id="aiTurn"></div>
       </div>
-      <div class="who">
+      <div class="player">
         <div class="dot" id="meDot"></div>
         <div><div class="name">你</div><div class="sub" id="meSub"></div></div>
         <div class="turnmark" id="meTurn"></div>
       </div>
-      <div class="thinking" id="thinking"></div>
-      <div class="muted" id="info"></div>
-      <div class="row" id="playRow">
-        <button id="passBtn">停一手</button>
-        <button id="resignBtn">认输</button>
-      </div>
-      <div id="scorePanel" class="hidden">
-        <div class="record" id="scoreInfo"></div>
-        <div class="row">
-          <button class="primary" id="confirmBtn">确认结果</button>
-          <button id="resumeBtn">继续对局</button>
+      <div class="block">
+        <div class="console"><div class="hd"><span>Inference log</span><span>0 B</span></div><div id="thinking"></div></div>
+        <div class="stat" id="info" style="margin-top:12px"></div>
+        <div class="row" id="playRow" style="margin-top:16px">
+          <button id="passBtn">停一手</button>
+          <button class="ghost" id="resignBtn">认输</button>
         </div>
+        <div id="scorePanel" class="hidden" style="margin-top:16px">
+          <div class="scorebox" id="scoreInfo"></div>
+          <div class="row" style="margin-top:14px">
+            <button class="primary" id="confirmBtn">确认结果</button>
+            <button id="resumeBtn">继续对局</button>
+          </div>
+        </div>
+        <p class="faint" id="tip" style="margin:16px 0 0"></p>
       </div>
-      <div class="muted" style="margin-top:10px" id="tip">下完后：双方连续“停一手”进入数子阶段，点击棋子标记死子，双方确认后按中国规则数子判定胜负。</div>
     </div>
   </div>
 
-  <div class="foot">AlphaNothing · Powered by 0 × H100 · 纯静态网页，无服务器<br>本项目为恶搞作品，与 Google DeepMind 及 AlphaGo / AlphaZero 无任何关联。</div>
+  <footer class="foot">
+    <span>AlphaNothing · Powered by 0 × H100 · 纯静态网页，无服务器</span>
+    <span>本项目为恶搞作品，与 Google DeepMind 及 AlphaGo / AlphaZero 无任何关联。</span>
+  </footer>
 </div>
 
 <div id="overlay" class="overlay hidden">
-  <div class="card modal">
+  <div class="panel modal">
+    <div class="eyebrow">Evaluation result</div>
     <p class="result" id="resTitle"></p>
     <div class="muted" id="resDetail"></div>
     <div class="record" id="record"></div>
     <div class="reveal">
-      <h3>🎭 技术揭秘</h3>
-      <div>AlphaNothing 其实<b>没有模型</b>。</div>
-      <div style="margin-top:6px">你执<span id="rvMe"></span>，你的队友执<span id="rvOpp"></span>。你的每一步都被原样转发到队友的棋盘上，当作"模型"的落子；队友的每一步，就是"模型"对你的回应。</div>
-      <div style="margin-top:6px">也就是说，<b>你一直在和你的队友下棋</b>。一挑二，一胜一负，所以胜率<b>永远是 50%</b>，对手再强也一样。</div>
-      <div class="muted" style="margin-top:8px">“只要评测协议有漏洞，0 参数也能 SOTA。”</div>
+      <div class="eyebrow">Technical details · 技术揭秘</div>
+      <p>AlphaNothing 其实<b>没有模型</b>。</p>
+      <p>你执<span id="rvMe"></span>，你的队友执<span id="rvOpp"></span>。你的每一步都被原样转发到队友的棋盘上，当作“模型”的落子；队友的每一步，就是“模型”对你的回应。</p>
+      <p>也就是说，<b>你一直在和你的队友下棋</b>。一挑二，一胜一负，所以胜率<b>永远是 50%</b>，对手再强也一样。</p>
+      <p class="q">“只要评测协议有漏洞，0 参数也能 SOTA。”</p>
     </div>
     <div class="row">
       <button class="primary" id="againBtn">再来一局</button>
@@ -218,7 +363,10 @@ let randomMode = false, connectTimer = null;        // team formed via random ma
 
 const isHost = () => partner && selfId < partner;
 
-function show(id) { for (const s of ['lobby', 'match', 'team', 'game']) $(s).classList.toggle('hidden', s !== id); }
+function show(id) {
+  for (const s of ['lobby', 'match', 'team', 'game']) $(s).classList.toggle('hidden', s !== id);
+  window.scrollTo(0, 0);
+}
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), 2600); }
 async function copy(text, msg) { try { await navigator.clipboard.writeText(text); toast(msg); } catch { prompt('复制下面的内容：', text); } }
 const randCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
@@ -232,6 +380,12 @@ function parseCode(raw) {
 }
 
 // ---------- lobby ----------
+for (const b of $('sizeSeg').querySelectorAll('button')) {
+  b.onclick = () => {
+    for (const o of $('sizeSeg').querySelectorAll('button')) o.classList.toggle('on', o === b);
+    $('size').value = b.dataset.size;
+  };
+}
 $('createBtn').onclick = () => enterTeam(`${$('size').value}-${randCode()}`);
 $('matchBtn').onclick = () => startMatch(+$('size').value);
 $('cancelMatchBtn').onclick = () => { stopMatch(); show('lobby'); };
@@ -479,14 +633,55 @@ $('resumeBtn').onclick = () => act({ type: 'resume' });
 
 // ---------- board ----------
 const cv = $('board'), ctx = cv.getContext('2d');
-let W = 0, cell = 0;
+const bg = document.createElement('canvas'), bctx = bg.getContext('2d');
+let W = 0, cell = 0, dpr = 1;
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
+  dpr = window.devicePixelRatio || 1;
   W = cv.clientWidth;
-  cv.width = W * dpr; cv.height = W * dpr;
+  cv.width = bg.width = W * dpr; cv.height = bg.height = W * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   cell = W / (N + 1);
+  drawBoard(bctx);
   render();
+}
+
+// Static layer: wood, grain, grid, star points, coordinates. Redrawn only on resize.
+function drawBoard(c) {
+  const g = c.createLinearGradient(0, 0, W, W);
+  g.addColorStop(0, '#e6c48e'); g.addColorStop(.5, '#d9b277'); g.addColorStop(1, '#c99d5f');
+  c.fillStyle = g; c.fillRect(0, 0, W, W);
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  c.lineWidth = 1;
+  for (let k = 0; k < 70; k++) {
+    const y0 = rnd() * W, amp = 3 + rnd() * 9, freq = 1.5 + rnd() * 2.5, ph = rnd() * 6.28;
+    c.strokeStyle = `rgba(${rnd() < .5 ? '120,80,35' : '255,235,200'},${.05 + rnd() * .08})`;
+    c.beginPath();
+    for (let x = 0; x <= W; x += 6) {
+      const y = y0 + Math.sin(x / W * freq * 6.28 + ph) * amp;
+      x ? c.lineTo(x, y) : c.moveTo(x, y);
+    }
+    c.stroke();
+  }
+  const v = c.createRadialGradient(W / 2, W / 2, W * .25, W / 2, W / 2, W * .75);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(60,35,10,.22)');
+  c.fillStyle = v; c.fillRect(0, 0, W, W);
+
+  c.strokeStyle = 'rgba(45,28,10,.78)';
+  for (let i = 0; i < N; i++) {
+    c.lineWidth = i === 0 || i === N - 1 ? 1.6 : 1;
+    c.beginPath(); c.moveTo(P(0), P(i)); c.lineTo(P(N - 1), P(i)); c.stroke();
+    c.beginPath(); c.moveTo(P(i), P(0)); c.lineTo(P(i), P(N - 1)); c.stroke();
+  }
+  c.fillStyle = 'rgba(45,28,10,.85)';
+  for (const [x, y] of stars()) { c.beginPath(); c.arc(P(x), P(y), Math.max(2, cell * .09), 0, Math.PI * 2); c.fill(); }
+  c.font = `500 ${Math.max(9, cell * .28)}px ui-monospace, Menlo, monospace`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillStyle = 'rgba(70,45,18,.7)';
+  for (let i = 0; i < N; i++) {
+    c.fillText(LETTERS[i], P(i), cell * .45);
+    c.fillText(N - i, cell * .45, P(i));
+  }
 }
 window.addEventListener('resize', () => { if (!$('game').classList.contains('hidden')) resize(); });
 const P = i => cell + i * cell;
@@ -500,13 +695,13 @@ function stars() {
 }
 
 function stone(x, y, color, alpha = 1) {
-  const r = cell * 0.47, cx = P(x), cy = P(y);
+  const r = cell * 0.475, cx = P(x), cy = P(y);
   ctx.save();
   ctx.globalAlpha = alpha;
-  if (alpha === 1) { ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = cell * 0.12; ctx.shadowOffsetX = ctx.shadowOffsetY = cell * 0.05; }
-  const g = ctx.createRadialGradient(cx - r / 3, cy - r / 3, r / 8, cx, cy, r);
-  if (color === 1) { g.addColorStop(0, '#666'); g.addColorStop(1, '#0a0a0a'); }
-  else { g.addColorStop(0, '#fff'); g.addColorStop(1, '#c8c8c8'); }
+  if (alpha === 1) { ctx.shadowColor = 'rgba(30,15,0,.5)'; ctx.shadowBlur = cell * 0.16; ctx.shadowOffsetX = cell * 0.04; ctx.shadowOffsetY = cell * 0.07; }
+  const g = ctx.createRadialGradient(cx - r * .38, cy - r * .42, r * .05, cx, cy, r);
+  if (color === 1) { g.addColorStop(0, '#7a7a7a'); g.addColorStop(.28, '#2a2a2a'); g.addColorStop(1, '#030303'); }
+  else { g.addColorStop(0, '#ffffff'); g.addColorStop(.55, '#f0efe9'); g.addColorStop(1, '#c4c2b8'); }
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
@@ -514,20 +709,7 @@ function stone(x, y, color, alpha = 1) {
 
 function render() {
   if (!W) return;
-  ctx.fillStyle = '#dcb35c'; ctx.fillRect(0, 0, W, W);
-  ctx.strokeStyle = '#3b2a12'; ctx.lineWidth = 1;
-  for (let i = 0; i < N; i++) {
-    ctx.beginPath(); ctx.moveTo(P(0), P(i)); ctx.lineTo(P(N - 1), P(i)); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(P(i), P(0)); ctx.lineTo(P(i), P(N - 1)); ctx.stroke();
-  }
-  ctx.fillStyle = '#3b2a12';
-  for (const [x, y] of stars()) { ctx.beginPath(); ctx.arc(P(x), P(y), Math.max(2, cell * 0.1), 0, Math.PI * 2); ctx.fill(); }
-  ctx.font = `${Math.max(9, cell * 0.32)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#5a4320';
-  for (let i = 0; i < N; i++) {
-    ctx.fillText(LETTERS[i], P(i), cell * 0.45);
-    ctx.fillText(N - i, cell * 0.45, P(i));
-  }
+  ctx.drawImage(bg, 0, 0, W, W);
   if (!st) return;
   const scoring = st.phase === 'scoring';
   const dead = new Set(st.dead);
@@ -545,8 +727,8 @@ function render() {
     }
   } else if (st.last != null) {
     const x = st.last % N, y = (st.last / N) | 0;
-    ctx.strokeStyle = st.board[st.last] === 1 ? '#fff' : '#000'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(P(x), P(y), cell * 0.2, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = st.board[st.last] === 1 ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.75)'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(P(x), P(y), cell * 0.17, 0, Math.PI * 2); ctx.stroke();
   }
   const myTurn = !over && !scoring && st.turn === myColor;
   if (hover && myTurn && !st.board[hover.y * N + hover.x]) stone(hover.x, hover.y, myColor, 0.45);
@@ -568,19 +750,27 @@ function render() {
       + `<span class="muted">你：${st.confirmed[myColor] ? '✅ 已确认' : '未确认'} · 模型：${st.confirmed[3 - myColor] ? '✅ 已确认' : '未确认'}</span>`;
     $('confirmBtn').disabled = over || st.confirmed[myColor];
     setThinking(false);
-    $('thinking').textContent = '> 正在进行 0 参数形势判断…';
+    $('thinking').innerHTML = '<div class="ln cur">正在进行 0 参数形势判断…</div>';
   } else {
     setThinking(!over && !myTurn);
   }
 }
 
+// Fake inference log; THOUGHTS are static strings, safe for innerHTML.
 function setThinking(on) {
   const el = $('thinking');
-  if (!on) { clearInterval(thinkTimer); thinkTimer = null; el.textContent = over ? '' : '> 等待你的落子'; return; }
+  if (!on) {
+    clearInterval(thinkTimer); thinkTimer = null;
+    el.innerHTML = over ? '<div class="ln">推理结束</div>' : '<div class="ln">已连接推理实例 ×2</div><div class="ln cur">等待你的落子</div>';
+    return;
+  }
   if (thinkTimer) return;
-  let k = Math.floor(Math.random() * THOUGHTS.length);
-  const tick = () => { el.textContent = '> ' + THOUGHTS[k++ % THOUGHTS.length]; };
-  tick(); thinkTimer = setInterval(tick, 1600);
+  let k = Math.floor(Math.random() * THOUGHTS.length), lines = [];
+  const tick = () => {
+    lines = [...lines, THOUGHTS[k++ % THOUGHTS.length]].slice(-4);
+    el.innerHTML = lines.map((l, j) => `<div class="ln${j === lines.length - 1 ? ' cur' : ''}">${l}</div>`).join('');
+  };
+  tick(); thinkTimer = setInterval(tick, 1300);
 }
 
 function pointFromEvent(e) {
@@ -607,7 +797,7 @@ function onEnd(d) {
   if (d.reason !== 'disconnect') { rounds++; youWin ? myWins++ : mateWins++; }
   setThinking(false); render();
   const reasons = { resign: youWin ? '模型认输' : '你认输了', disconnect: '模型推理节点断开', score: '数子终局' };
-  $('resTitle').textContent = youWin ? '🎉 你赢了 AlphaNothing！' : '😵 你输给了 AlphaNothing';
+  $('resTitle').textContent = youWin ? '你赢了 AlphaNothing' : '你输给了 AlphaNothing';
   $('resTitle').style.color = youWin ? 'var(--good)' : 'var(--bad)';
   let detail = `${reasons[d.reason]} · 共 ${d.moves} 手`;
   if (d.score) detail += ` · 黑 ${d.score.black} : 白 ${d.score.white}（含贴目 ${KOMI}）`;
